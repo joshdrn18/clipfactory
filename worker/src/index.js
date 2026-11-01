@@ -5,7 +5,7 @@ const encoder = new TextEncoder();
 const hex = b => [...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,"0")).join("");
 async function digest(value){return hex(await crypto.subtle.digest("SHA-256",encoder.encode(value)))}
 async function passwordHash(password,salt){const key=await crypto.subtle.importKey("raw",encoder.encode(password),"PBKDF2",false,["deriveBits"]);return hex(await crypto.subtle.deriveBits({name:"PBKDF2",salt:encoder.encode(salt),iterations:100000,hash:"SHA-256"},key,256))}
-function cors(req,env){const origin=req.headers.get("Origin")||"";const allowed=env.ALLOWED_ORIGIN||"";return {"Access-Control-Allow-Origin":allowed==="*"||origin===allowed?origin:allowed,"Access-Control-Allow-Methods":"GET,POST,OPTIONS","Access-Control-Allow-Headers":"Content-Type,Authorization","Vary":"Origin"}}
+function cors(req,env){const origin=req.headers.get("Origin")||"";const allowed=env.ALLOWED_ORIGIN||"";return {"Access-Control-Allow-Origin":allowed==="*"||origin===allowed?origin:allowed,"Access-Control-Allow-Methods":"GET,POST,PUT,DELETE,OPTIONS","Access-Control-Allow-Headers":"Content-Type,Authorization","Vary":"Origin"}}
 function withCors(response,headers){const h=new Headers(response.headers);Object.entries(headers).forEach(([k,v])=>v&&h.set(k,v));return new Response(response.body,{status:response.status,headers:h})}
 async function body(req){try{return await req.json()}catch{return {}}}
 async function auth(req,env){const token=(req.headers.get("Authorization")||"").replace(/^Bearer\s+/i,"");if(!token)return null;const hash=await digest(token);return await env.DB.prepare("SELECT u.id,u.name,u.email,u.role,u.status FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>? AND u.status='active'").bind(hash,Math.floor(Date.now()/1000)).first()}
@@ -22,18 +22,82 @@ if(path==="/points"&&method==="GET"){const wallet=await env.DB.prepare("SELECT b
 if(path==="/points/ledger"&&method==="GET"){const {results:entries}=await env.DB.prepare("SELECT type,amount,balance_after,description,created_at FROM points_ledger WHERE user_id=? ORDER BY created_at DESC LIMIT 100").bind(user.id).all();return json({entries})}
 if(path==="/points/topups"&&method==="POST"){const b=await body(req),pkg=await env.DB.prepare("SELECT * FROM point_packages WHERE code=? AND active=1").bind(String(b.package_code||"")).first();if(!pkg)return fail("That points package is unavailable.");const id=uid(),reference="CF-"+crypto.randomUUID().slice(0,8).toUpperCase();await env.DB.prepare("INSERT INTO topups(id,user_id,package_code,reference,points,amount_minor,currency,note) VALUES(?,?,?,?,?,?,?,?)").bind(id,user.id,pkg.code,reference,pkg.points,pkg.price_minor,pkg.currency,String(b.note||"").slice(0,500)).run();return json({topup:{id,reference,points:pkg.points,amount_minor:pkg.price_minor,currency:pkg.currency,status:"pending"},message:"Pending request created. Points are not credited until payment is verified."},201)}
 
-if(path==="/media/upload"&&method==="POST"){
+if(path==="/media/upload/init"&&method==="POST"){
  if(!env.MEDIA)return fail("Media storage is not configured. Bind the R2 bucket as MEDIA.",503);
- const form=await req.formData(),file=form.get("file"),projectId=String(form.get("project_id")||""),kind=String(form.get("kind")||"source");
- if(!(file instanceof File)||!file.size)return fail("Choose a video file.");
- if(file.size>80*1024*1024)return fail("Each upload must be 80 MB or smaller.");
+ const b=await body(req),fileName=String(b.file_name||"video.mp4").replace(/[^a-zA-Z0-9._-]/g,"_").slice(-120)||"video.mp4";
+ const projectId=String(b.project_id||""),kind=String(b.kind||"source"),size=Number(b.file_size),contentType=String(b.content_type||"");
+ if(!Number.isSafeInteger(size)||size<1||size>500*1024*1024)return fail("Each video must be between 1 byte and 500 MB.");
+ if(!["source","export"].includes(kind))return fail("Invalid media type.");
+ if(!/^video\/(mp4|quicktime|webm|x-matroska)$/.test(contentType))return fail("Unsupported video format.");
  const project=await env.DB.prepare("SELECT id FROM projects WHERE id=? AND user_id=?").bind(projectId,user.id).first();
  if(!project)return fail("Project not found.",404);
- if(!/^video\/(mp4|quicktime|webm|x-matroska)$/.test(file.type||""))return fail("Unsupported video format.");
- const id=uid(),safeName=file.name.replace(/[^a-zA-Z0-9._-]/g,"_").slice(-120)||"video.mp4",key=user.id+"/"+projectId+"/"+id+"-"+safeName;
- await env.MEDIA.put(key,file.stream(),{httpMetadata:{contentType:file.type||"application/octet-stream"},customMetadata:{userId:user.id,projectId,kind}});
- await env.DB.prepare("INSERT INTO media_assets(id,user_id,project_id,kind,file_name,object_key,size_bytes,content_type) VALUES(?,?,?,?,?,?,?,?)").bind(id,user.id,projectId,kind,safeName,key,file.size,file.type||"application/octet-stream").run();
- return json({asset:{id,project_id:projectId,kind,file_name:safeName,size_bytes:file.size,content_type:file.type||"application/octet-stream"}},201);
+ const pointsCost=kind==="source"&&user.role!=="admin"?Math.ceil(size/(100*1024*1024))*10:0;
+ if(pointsCost>0){
+  const charge=await env.DB.batch([
+   env.DB.prepare("UPDATE wallets SET balance=balance-?,updated_at=datetime('now') WHERE user_id=? AND balance>=?").bind(pointsCost,user.id,pointsCost),
+   env.DB.prepare("INSERT INTO points_ledger(id,user_id,type,amount,balance_after,description) SELECT ?,?,'usage',-?,balance,? FROM wallets WHERE user_id=? AND changes()=1").bind(uid(),user.id,pointsCost,"Video upload · "+fileName,user.id)
+  ]);
+  if(!charge[0].meta.changes)return fail("Not enough points. This upload requires "+pointsCost+" points.",402);
+ }
+ const id=uid(),key=user.id+"/"+projectId+"/"+id+"-"+fileName;
+ let multipart;
+ try{
+  multipart=await env.MEDIA.createMultipartUpload(key,{httpMetadata:{contentType},customMetadata:{userId:user.id,projectId,kind}});
+  await env.DB.prepare("INSERT INTO media_uploads(id,user_id,project_id,kind,file_name,object_key,r2_upload_id,size_bytes,content_type,points_charged) VALUES(?,?,?,?,?,?,?,?,?,?)").bind(id,user.id,projectId,kind,fileName,key,multipart.uploadId,size,contentType,pointsCost).run();
+ }catch(e){
+  if(multipart)await multipart.abort().catch(()=>{});
+  if(pointsCost>0){
+   await env.DB.batch([
+    env.DB.prepare("UPDATE wallets SET balance=balance+?,updated_at=datetime('now') WHERE user_id=?").bind(pointsCost,user.id),
+    env.DB.prepare("INSERT INTO points_ledger(id,user_id,type,amount,balance_after,description) SELECT ?,?,'refund',?,balance,? FROM wallets WHERE user_id=?").bind(uid(),user.id,pointsCost,"Refund · upload initialization failed · "+fileName,user.id)
+   ]);
+  }
+  throw e;
+ }
+ const wallet=await env.DB.prepare("SELECT balance FROM wallets WHERE user_id=?").bind(user.id).first();
+ return json({upload_id:id,points_charged:pointsCost,balance:wallet?.balance??0,unlimited:user.role==="admin"},201);
+}
+const uploadPart=path.match(/^\/media\/upload\/([\w-]+)\/part$/);
+if(uploadPart&&method==="PUT"){
+ const session=await env.DB.prepare("SELECT object_key,r2_upload_id FROM media_uploads WHERE id=? AND user_id=?").bind(uploadPart[1],user.id).first();
+ if(!session)return fail("Upload session not found.",404);
+ const partNumber=Number(url.searchParams.get("partNumber"));
+ if(!Number.isInteger(partNumber)||partNumber<1||partNumber>10000)return fail("Invalid multipart part number.");
+ const part=await env.MEDIA.resumeMultipartUpload(session.object_key,session.r2_upload_id).uploadPart(partNumber,req.body);
+ return json({part_number:part.partNumber,etag:part.etag});
+}
+const uploadComplete=path.match(/^\/media\/upload\/([\w-]+)\/complete$/);
+if(uploadComplete&&method==="POST"){
+ const session=await env.DB.prepare("SELECT * FROM media_uploads WHERE id=? AND user_id=?").bind(uploadComplete[1],user.id).first();
+ if(!session)return fail("Upload session not found.",404);
+ const b=await body(req),parts=Array.isArray(b.parts)?b.parts.map(p=>({partNumber:Number(p.partNumber),etag:String(p.etag||"")})):[];
+ if(!parts.length||parts.some(p=>!Number.isInteger(p.partNumber)||p.partNumber<1||!p.etag))return fail("Upload parts are incomplete.");
+ parts.sort((a,b)=>a.partNumber-b.partNumber);
+ const multipart=env.MEDIA.resumeMultipartUpload(session.object_key,session.r2_upload_id);
+ await multipart.complete(parts);
+ const id=uid();
+ try{
+  await env.DB.prepare("INSERT INTO media_assets(id,user_id,project_id,kind,file_name,object_key,size_bytes,content_type) VALUES(?,?,?,?,?,?,?,?)").bind(id,user.id,session.project_id,session.kind,session.file_name,session.object_key,session.size_bytes,session.content_type).run();
+  await env.DB.prepare("DELETE FROM media_uploads WHERE id=? AND user_id=?").bind(session.id,user.id).run();
+ }catch(e){
+  await env.MEDIA.delete(session.object_key).catch(()=>{});
+  throw e;
+ }
+ return json({asset:{id,project_id:session.project_id,kind:session.kind,file_name:session.file_name,size_bytes:session.size_bytes,content_type:session.content_type},points_charged:session.points_charged});
+}
+const uploadCancel=path.match(/^\/media\/upload\/([\w-]+)\/cancel$/);
+if(uploadCancel&&method==="POST"){
+ const session=await env.DB.prepare("SELECT * FROM media_uploads WHERE id=? AND user_id=?").bind(uploadCancel[1],user.id).first();
+ if(!session)return json({ok:true});
+ await env.MEDIA.resumeMultipartUpload(session.object_key,session.r2_upload_id).abort().catch(()=>{});
+ await env.DB.prepare("DELETE FROM media_uploads WHERE id=? AND user_id=?").bind(session.id,user.id).run();
+ if(session.points_charged>0){
+  await env.DB.batch([
+   env.DB.prepare("UPDATE wallets SET balance=balance+?,updated_at=datetime('now') WHERE user_id=?").bind(session.points_charged,user.id),
+   env.DB.prepare("INSERT INTO points_ledger(id,user_id,type,amount,balance_after,description) SELECT ?,?,'refund',?,balance,? FROM wallets WHERE user_id=?").bind(uid(),user.id,session.points_charged,"Refund · cancelled upload · "+session.file_name,user.id)
+  ]);
+ }
+ return json({ok:true});
 }
 if(path==="/media"&&method==="GET"){
  const projectId=String(url.searchParams.get("project_id")||"");
