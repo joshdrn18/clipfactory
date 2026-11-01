@@ -1,0 +1,21 @@
+name = "clipfactory-api"
+main = "src/index.js"
+compatibility_date = "2026-10-30"
+
+[vars]
+ALLOWED_ORIGIN = "https://YOUR-PAGES-DOMAIN.pages.dev"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "clipfactory-db"
+database_id = "REPLACE_WITH_D1_DATABASE_ID"
+
+# Optional: create an R2 bucket and uncomment.
+# [[r2_buckets]]
+# binding = "MEDIA"
+# bucket_name = "clipfactory-media"
+
+# Optional: create a Queue and uncomment.
+# [[queues.producers]]
+# binding = "VIDEO_QUEUE"
+# queue = "clipfactory-video-jobs"
