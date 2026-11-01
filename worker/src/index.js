@@ -21,6 +21,34 @@ if(!user)return fail("Please sign in.",401);
 if(path==="/points"&&method==="GET"){const wallet=await env.DB.prepare("SELECT balance FROM wallets WHERE user_id=?").bind(user.id).first();const {results:packages}=await env.DB.prepare("SELECT code,name,points,price_minor,currency FROM point_packages WHERE active=1 ORDER BY sort_order").all();return json({balance:wallet?.balance||0,unlimited:user.role==="admin",packages})}
 if(path==="/points/ledger"&&method==="GET"){const {results:entries}=await env.DB.prepare("SELECT type,amount,balance_after,description,created_at FROM points_ledger WHERE user_id=? ORDER BY created_at DESC LIMIT 100").bind(user.id).all();return json({entries})}
 if(path==="/points/topups"&&method==="POST"){const b=await body(req),pkg=await env.DB.prepare("SELECT * FROM point_packages WHERE code=? AND active=1").bind(String(b.package_code||"")).first();if(!pkg)return fail("That points package is unavailable.");const id=uid(),reference="CF-"+crypto.randomUUID().slice(0,8).toUpperCase();await env.DB.prepare("INSERT INTO topups(id,user_id,package_code,reference,points,amount_minor,currency,note) VALUES(?,?,?,?,?,?,?,?)").bind(id,user.id,pkg.code,reference,pkg.points,pkg.price_minor,pkg.currency,String(b.note||"").slice(0,500)).run();return json({topup:{id,reference,points:pkg.points,amount_minor:pkg.price_minor,currency:pkg.currency,status:"pending"},message:"Pending request created. Points are not credited until payment is verified."},201)}
+
+if(path==="/media/upload"&&method==="POST"){
+ if(!env.MEDIA)return fail("Media storage is not configured. Bind the R2 bucket as MEDIA.",503);
+ const form=await req.formData(),file=form.get("file"),projectId=String(form.get("project_id")||""),kind=String(form.get("kind")||"source");
+ if(!(file instanceof File)||!file.size)return fail("Choose a video file.");
+ if(file.size>80*1024*1024)return fail("Each upload must be 80 MB or smaller.");
+ const project=await env.DB.prepare("SELECT id FROM projects WHERE id=? AND user_id=?").bind(projectId,user.id).first();
+ if(!project)return fail("Project not found.",404);
+ if(!/^video\/(mp4|quicktime|webm|x-matroska)$/.test(file.type||""))return fail("Unsupported video format.");
+ const id=uid(),safeName=file.name.replace(/[^a-zA-Z0-9._-]/g,"_").slice(-120)||"video.mp4",key=user.id+"/"+projectId+"/"+id+"-"+safeName;
+ await env.MEDIA.put(key,file.stream(),{httpMetadata:{contentType:file.type||"application/octet-stream"},customMetadata:{userId:user.id,projectId,kind}});
+ await env.DB.prepare("INSERT INTO media_assets(id,user_id,project_id,kind,file_name,object_key,size_bytes,content_type) VALUES(?,?,?,?,?,?,?,?)").bind(id,user.id,projectId,kind,safeName,key,file.size,file.type||"application/octet-stream").run();
+ return json({asset:{id,project_id:projectId,kind,file_name:safeName,size_bytes:file.size,content_type:file.type||"application/octet-stream"}},201);
+}
+if(path==="/media"&&method==="GET"){
+ const projectId=String(url.searchParams.get("project_id")||"");
+ const {results}=await env.DB.prepare("SELECT id,project_id,kind,file_name,size_bytes,content_type,created_at FROM media_assets WHERE user_id=? AND project_id=? ORDER BY created_at DESC LIMIT 100").bind(user.id,projectId).all();
+ return json({assets:results});
+}
+const mediaDownload=path.match(/^\/media\/([\w-]+)\/download$/);
+if(mediaDownload&&method==="GET"){
+ if(!env.MEDIA)return fail("Media storage is not configured.",503);
+ const asset=await env.DB.prepare("SELECT object_key,file_name,content_type FROM media_assets WHERE id=? AND user_id=?").bind(mediaDownload[1],user.id).first();
+ if(!asset)return fail("Media file not found.",404);
+ const object=await env.MEDIA.get(asset.object_key);
+ if(!object)return fail("Media file is missing from storage.",404);
+ return new Response(object.body,{headers:{"Content-Type":asset.content_type||"application/octet-stream","Content-Disposition":'attachment; filename="'+asset.file_name.replace(/["\\\\]/g,"_")+'"',"Cache-Control":"private, no-store"}});
+}
 if(path==="/projects"&&method==="POST"){const b=await body(req),name=String(b.name||"Untitled project").trim().slice(0,120),kind=String(b.kind||"Video").slice(0,40),settings=JSON.stringify(b.settings||{}),id=uid();await env.DB.prepare("INSERT INTO projects(id,user_id,name,kind,settings_json) VALUES(?,?,?,?,?)").bind(id,user.id,name,kind,settings).run();return json({project:{id,name,kind,status:"draft",created_at:new Date().toISOString()}},201)}
 
 if(path.startsWith("/admin/")&&user.role!=="admin")return fail("Admin access required.",403);
