@@ -40,7 +40,81 @@ $("fileInput").onchange=e=>selectFiles(e.target.files);
 $("dropzone").ondragover=e=>{e.preventDefault();$("dropzone").style.borderColor="#a48aff"};
 $("dropzone").ondragleave=()=>$("dropzone").style.borderColor="";
 $("dropzone").ondrop=e=>{e.preventDefault();$("dropzone").style.borderColor="";selectFiles(e.dataTransfer.files)};
-$("createBatch").onclick=async()=>{if(!state.files.length)return;if(!state.user){openAuth();toast("Sign in to save your project.");return}try{const d=await api("/projects",{method:"POST",body:JSON.stringify({name:state.files.length+" video batch",kind:"Bulk upload",settings:{aspect:$("aspect").value,workflow:$("workflow").value,fileNames:state.files.map(f=>f.name)}})});state.projects.unshift(d.project);$("statProjects").textContent=state.projects.length;$("recentProjects").innerHTML=state.projects.slice(0,4).map(projectRow).join("");state.files=[];$("fileList").innerHTML="";$("createBatch").disabled=true;toast("Project saved. Video storage/processing needs configuration.");showView("projects")}catch(e){toast(e.message)}};
+function engineProgress(label,pct){$("engineProgress").hidden=false;$("engineStatus").textContent=label;$("enginePercent").textContent=Math.round(pct)+"%";$("engineProgressBar").style.width=Math.max(0,Math.min(100,pct))+"%"}
+async function getFFmpeg(){
+ if(state.ffmpeg)return state.ffmpeg;
+ engineProgress("Loading video engine (first run may take a moment)…",2);
+ const {FFmpeg}=await import("https://esm.sh/@ffmpeg/ffmpeg@0.12.15");
+ const ffmpeg=new FFmpeg();
+ ffmpeg.on("progress",({progress})=>engineProgress("Processing video…",Math.max(5,Math.min(94,progress*90))));
+ await ffmpeg.load({coreURL:"https://unpkg.com/@ffmpeg/core@0.12.10/dist/umd/ffmpeg-core.js",wasmURL:"https://unpkg.com/@ffmpeg/core@0.12.10/dist/umd/ffmpeg-core.wasm"});
+ state.ffmpeg=ffmpeg;return ffmpeg;
+}
+async function uploadMedia(file,projectId,kind){
+ const form=new FormData();form.append("file",file,file.name);form.append("project_id",projectId);form.append("kind",kind);
+ return api("/media/upload",{method:"POST",body:form});
+}
+function videoFilter(){
+ const dims=$("aspect").value==="9:16"?"1080:1920":$("aspect").value==="1:1"?"1080:1080":"1920:1080";
+ return "scale="+dims+":force_original_aspect_ratio=increase,crop="+dims;
+}
+$("createBatch").onclick=async()=>{
+ if(!state.files.length)return;
+ if(!state.user){openAuth();toast("Sign in to process videos.");return}
+ const files=[...state.files],workflow=$("workflow").value,aspect=$("aspect").value,clipSeconds=Number($("clipDuration").value);
+ if(workflow==="subtitle"){toast("Auto subtitles are coming soon. Choose another workflow.");return}
+ $("createBatch").disabled=true;$("engineResults").innerHTML="";
+ try{
+  engineProgress("Creating project…",1);
+  const projectData=await api("/projects",{method:"POST",body:JSON.stringify({name:files.length+" video batch",kind:"Video processing",settings:{aspect,workflow,clipSeconds,fileNames:files.map(f=>f.name)}})});
+  const project=projectData.project;state.projects.unshift(project);$("statProjects").textContent=state.projects.length;
+  const ffmpeg=await getFFmpeg(),{fetchFile}=await import("https://esm.sh/@ffmpeg/util@0.12.2");
+  const results=[];let completed=0,total=files.length;
+  for(let fi=0;fi<files.length;fi++){
+   const file=files[fi],base=file.name.replace(/\.[^.]+$/,"").replace(/[^a-zA-Z0-9_-]/g,"-").slice(0,45)||"video";
+   engineProgress("Uploading original "+(fi+1)+"/"+files.length+" · "+file.name,5+fi/files.length*10);
+   await uploadMedia(file,project.id,"source");
+   const input="input-"+fi+"-"+Date.now()+".mp4";await ffmpeg.writeFile(input,await fetchFile(file));
+   const video=document.createElement("video");video.preload="metadata";video.src=URL.createObjectURL(file);
+   const duration=await new Promise(resolve=>{video.onloadedmetadata=()=>resolve(video.duration||0);video.onerror=()=>resolve(0)});
+   URL.revokeObjectURL(video.src);
+   if(!duration)throw new Error("Could not read video duration for "+file.name);
+   const segments=workflow==="clips"?Math.ceil(duration/clipSeconds):1;total+=segments-1;
+   for(let si=0;si<segments;si++){
+    const offset=workflow==="clips"?si*clipSeconds:0,seconds=workflow==="clips"?Math.min(clipSeconds,duration-offset):duration;
+    if(seconds<=0)continue;
+    const output=base+(workflow==="clips"?"-clip-"+String(si+1).padStart(2,"0"):"-export")+".mp4";
+    const args=["-ss",String(offset),"-i",input,"-t",String(seconds)];
+    if(workflow==="resize"||workflow==="clips")args.push("-vf",videoFilter());
+    args.push("-c:v","libx264","-preset","ultrafast","-crf",workflow==="compress"?"30":"25","-c:a","aac","-b:a","128k","-movflags","+faststart",output);
+    engineProgress("Rendering "+output,15+(completed/total)*75);
+    const code=await ffmpeg.exec(args);
+    if(code!==0)throw new Error("FFmpeg could not render "+file.name);
+    const bytes=await ffmpeg.readFile(output),blob=new Blob([bytes.buffer],{type:"video/mp4"});
+    const exported=new File([blob],output,{type:"video/mp4"});
+    engineProgress("Saving "+output+" to cloud storage…",15+((completed+0.7)/total)*75);
+    const saved=await uploadMedia(exported,project.id,"export");
+    results.push(saved.asset);await ffmpeg.deleteFile(output);completed++;
+   }
+   await ffmpeg.deleteFile(input);
+  }
+  state.files=[];$("fileList").innerHTML="";$("createBatch").disabled=true;
+  $("recentProjects").innerHTML=state.projects.slice(0,4).map(projectRow).join("");renderProjects();
+  $("engineStatus").textContent="Completed · "+results.length+" export(s) saved";$("enginePercent").textContent="100%";$("engineProgressBar").style.width="100%";
+  $("engineResults").innerHTML='<h3>Ready to download</h3>'+results.map(x=>'<div class="engine-result"><span>'+escapeHtml(x.file_name)+' <small>· '+(x.size_bytes/1048576).toFixed(1)+' MB</small></span><button class="admin-action" data-download="'+x.id+'" data-name="'+escapeHtml(x.file_name)+'">Download</button></div>').join("");
+  toast("Video processing complete!");
+ }catch(e){engineProgress("Stopped: "+e.message,0);toast(e.message)}
+ finally{$("createBatch").disabled=!state.files.length}
+};
+$("engineResults").onclick=async e=>{
+ const b=e.target.closest("[data-download]");if(!b)return;
+ try{
+  const response=await fetch(apiBase()+"/api/media/"+b.dataset.download+"/download",{headers:{Authorization:"Bearer "+state.token}});
+  if(!response.ok)throw new Error("Download failed");
+  const blob=await response.blob(),url=URL.createObjectURL(blob),a=document.createElement("a");
+  a.href=url;a.download=b.dataset.name;document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url);
+ }catch(err){toast(err.message)}
+};
 $("generateCopy").onclick=()=>{const topic=$("topic").value.trim();if(!topic){toast("Add a short description first.");return}const platform=$("platform").value,tone=$("tone").value;const clean=topic.replace(/[.!?]+$/,"");$("growthOutput").innerHTML='<strong>HOOK IDEAS</strong><br>1. "You need to see this if you love '+escapeHtml(clean.toLowerCase())+'."<br>2. "I wish I knew this sooner…"<br>3. "Here’s the part nobody talks about."<br><br><strong>CAPTION STARTER</strong><br>'+escapeHtml(clean)+'. Save this for later and tell me what you think.<br><br><strong>HASHTAG IDEAS</strong><br>#'+clean.split(/\s+/).slice(0,2).map(x=>x.replace(/[^a-z0-9]/gi,"")).filter(Boolean).join("")+' #'+platform.replace(/\s+/g,"")+' #CreatorTips #ContentIdeas<br><br><small>Draft suggestions · '+tone+' tone · Review and tailor before posting.</small>'};
 async function loadAdmin(tab){
  if(state.user?.role!=="admin")return;
