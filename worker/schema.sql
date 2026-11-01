@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS users (
   password_hash TEXT NOT NULL,
   password_salt TEXT NOT NULL,
   role TEXT NOT NULL DEFAULT 'user' CHECK(role IN ('user','admin')),
+  status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','suspended')),
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE TABLE IF NOT EXISTS sessions (
