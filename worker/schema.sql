@@ -84,3 +84,16 @@ CREATE TABLE IF NOT EXISTS processing_jobs (
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+-- Admin dashboard extensions (included for fresh database installs).
+-- Existing installations should run worker/admin-migration.sql instead.
+CREATE TABLE IF NOT EXISTS admin_audit_logs (
+  id TEXT PRIMARY KEY,
+  admin_user_id TEXT NOT NULL REFERENCES users(id),
+  action TEXT NOT NULL,
+  target_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  details TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS admin_audit_created_idx ON admin_audit_logs(created_at DESC);
+
