@@ -10,7 +10,7 @@ Automated video processing and content growth SaaS starter.
 - Cloudflare Queues: asynchronous processing (binding prepared)
 
 ## Deploy
-1. Import this repository into Cloudflare Pages. Build command: leave empty. Build output directory: `/`.
+1. Import this repository into Cloudflare Pages. Build command: leave empty. Build output directory: `.`.
 2. Deploy `worker/` as a Cloudflare Worker using `worker/wrangler.toml`.
 3. Create a D1 database and run `worker/schema.sql`.
 4. Configure Worker variables: `ADMIN_EMAIL` (the first admin account email) and `ALLOWED_ORIGIN` (your exact Pages origin).
