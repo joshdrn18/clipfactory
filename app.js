@@ -55,7 +55,6 @@ async function getFFmpeg(){
 }
 async function uploadMedia(file,projectId,kind){
  const init=await api("/media/upload/init",{method:"POST",body:JSON.stringify({file_name:file.name,file_size:file.size,content_type:file.type,project_id:projectId,kind})});
- if(kind==="source"&&state.user?.role!=="admin")updatePoints(init.balance,false);
  const parts=[],chunkSize=16*1024*1024,totalParts=Math.ceil(file.size/chunkSize);
  try{
   for(let partNumber=1;partNumber<=totalParts;partNumber++){
@@ -65,7 +64,9 @@ async function uploadMedia(file,projectId,kind){
    const part=await api("/media/upload/"+init.upload_id+"/part?partNumber="+partNumber,{method:"PUT",body:chunk,headers:{"Content-Type":"application/octet-stream"}});
    parts.push({partNumber:part.part_number,etag:part.etag});
   }
-  return await api("/media/upload/"+init.upload_id+"/complete",{method:"POST",body:JSON.stringify({parts})});
+  const completed=await api("/media/upload/"+init.upload_id+"/complete",{method:"POST",body:JSON.stringify({parts})});
+  if(kind==="source"&&state.user?.role!=="admin")updatePoints(completed.balance,false);
+  return completed;
  }catch(error){
   await api("/media/upload/"+init.upload_id+"/cancel",{method:"POST",body:"{}"}).catch(()=>{});
   await refresh().catch(()=>{});
