@@ -33,29 +33,18 @@ if(path==="/media/upload/init"&&method==="POST"){
  if(!project)return fail("Project not found.",404);
  const pointsCost=kind==="source"&&user.role!=="admin"?Math.ceil(size/(100*1024*1024))*10:0;
  if(pointsCost>0){
-  const charge=await env.DB.batch([
-   env.DB.prepare("UPDATE wallets SET balance=balance-?,updated_at=datetime('now') WHERE user_id=? AND balance>=?").bind(pointsCost,user.id,pointsCost),
-   env.DB.prepare("INSERT INTO points_ledger(id,user_id,type,amount,balance_after,description) SELECT ?,?,'usage',-?,balance,? FROM wallets WHERE user_id=? AND changes()=1").bind(uid(),user.id,pointsCost,"Video upload · "+fileName,user.id)
-  ]);
-  if(!charge[0].meta.changes)return fail("Not enough points. This upload requires "+pointsCost+" points.",402);
+  const wallet=await env.DB.prepare("SELECT balance FROM wallets WHERE user_id=?").bind(user.id).first();
+  if((wallet?.balance||0)<pointsCost)return fail("Not enough points. This upload requires "+pointsCost+" points.",402);
  }
  const id=uid(),key=user.id+"/"+projectId+"/"+id+"-"+fileName;
- let multipart;
+ const multipart=await env.MEDIA.createMultipartUpload(key,{httpMetadata:{contentType},customMetadata:{userId:user.id,projectId,kind}});
  try{
-  multipart=await env.MEDIA.createMultipartUpload(key,{httpMetadata:{contentType},customMetadata:{userId:user.id,projectId,kind}});
   await env.DB.prepare("INSERT INTO media_uploads(id,user_id,project_id,kind,file_name,object_key,r2_upload_id,size_bytes,content_type,points_charged) VALUES(?,?,?,?,?,?,?,?,?,?)").bind(id,user.id,projectId,kind,fileName,key,multipart.uploadId,size,contentType,pointsCost).run();
  }catch(e){
-  if(multipart)await multipart.abort().catch(()=>{});
-  if(pointsCost>0){
-   await env.DB.batch([
-    env.DB.prepare("UPDATE wallets SET balance=balance+?,updated_at=datetime('now') WHERE user_id=?").bind(pointsCost,user.id),
-    env.DB.prepare("INSERT INTO points_ledger(id,user_id,type,amount,balance_after,description) SELECT ?,?,'refund',?,balance,? FROM wallets WHERE user_id=?").bind(uid(),user.id,pointsCost,"Refund · upload initialization failed · "+fileName,user.id)
-   ]);
-  }
+  await multipart.abort().catch(()=>{});
   throw e;
  }
- const wallet=await env.DB.prepare("SELECT balance FROM wallets WHERE user_id=?").bind(user.id).first();
- return json({upload_id:id,points_charged:pointsCost,balance:wallet?.balance??0,unlimited:user.role==="admin"},201);
+ return json({upload_id:id,points_cost:pointsCost,unlimited:user.role==="admin"},201);
 }
 const uploadPart=path.match(/^\/media\/upload\/([\w-]+)\/part$/);
 if(uploadPart&&method==="PUT"){
@@ -73,17 +62,37 @@ if(uploadComplete&&method==="POST"){
  const b=await body(req),parts=Array.isArray(b.parts)?b.parts.map(p=>({partNumber:Number(p.partNumber),etag:String(p.etag||"")})):[];
  if(!parts.length||parts.some(p=>!Number.isInteger(p.partNumber)||p.partNumber<1||!p.etag))return fail("Upload parts are incomplete.");
  parts.sort((a,b)=>a.partNumber-b.partNumber);
+ let charged=false;
+ if(session.points_charged>0){
+  const charge=await env.DB.batch([
+   env.DB.prepare("UPDATE wallets SET balance=balance-?,updated_at=datetime('now') WHERE user_id=? AND balance>=?").bind(session.points_charged,user.id,session.points_charged),
+   env.DB.prepare("INSERT INTO points_ledger(id,user_id,type,amount,balance_after,description) SELECT ?,?,'usage',-?,balance,? FROM wallets WHERE user_id=? AND changes()=1").bind(uid(),user.id,session.points_charged,"Video upload · "+session.file_name,user.id)
+  ]);
+  if(!charge[0].meta.changes){
+   await env.MEDIA.resumeMultipartUpload(session.object_key,session.r2_upload_id).abort().catch(()=>{});
+   await env.DB.prepare("DELETE FROM media_uploads WHERE id=? AND user_id=?").bind(session.id,user.id).run();
+   return fail("Not enough points to complete this upload. You need "+session.points_charged+" points.",402);
+  }
+  charged=true;
+ }
  const multipart=env.MEDIA.resumeMultipartUpload(session.object_key,session.r2_upload_id);
- await multipart.complete(parts);
  const id=uid();
  try{
+  await multipart.complete(parts);
   await env.DB.prepare("INSERT INTO media_assets(id,user_id,project_id,kind,file_name,object_key,size_bytes,content_type) VALUES(?,?,?,?,?,?,?,?)").bind(id,user.id,session.project_id,session.kind,session.file_name,session.object_key,session.size_bytes,session.content_type).run();
   await env.DB.prepare("DELETE FROM media_uploads WHERE id=? AND user_id=?").bind(session.id,user.id).run();
  }catch(e){
   await env.MEDIA.delete(session.object_key).catch(()=>{});
+  if(charged){
+   await env.DB.batch([
+    env.DB.prepare("UPDATE wallets SET balance=balance+?,updated_at=datetime('now') WHERE user_id=?").bind(session.points_charged,user.id),
+    env.DB.prepare("INSERT INTO points_ledger(id,user_id,type,amount,balance_after,description) SELECT ?,?,'refund',?,balance,? FROM wallets WHERE user_id=?").bind(uid(),user.id,session.points_charged,"Refund · upload failed · "+session.file_name,user.id)
+   ]);
+  }
   throw e;
  }
- return json({asset:{id,project_id:session.project_id,kind:session.kind,file_name:session.file_name,size_bytes:session.size_bytes,content_type:session.content_type},points_charged:session.points_charged});
+ const wallet=await env.DB.prepare("SELECT balance FROM wallets WHERE user_id=?").bind(user.id).first();
+ return json({asset:{id,project_id:session.project_id,kind:session.kind,file_name:session.file_name,size_bytes:session.size_bytes,content_type:session.content_type},points_charged:session.points_charged,balance:wallet?.balance??0,unlimited:user.role==="admin"});
 }
 const uploadCancel=path.match(/^\/media\/upload\/([\w-]+)\/cancel$/);
 if(uploadCancel&&method==="POST"){
