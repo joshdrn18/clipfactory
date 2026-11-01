@@ -11,10 +11,9 @@ binding = "DB"
 database_name = "clipfactory-db"
 database_id = "0dda2127-8c55-44e0-8716-22db54dbdfb9"
 
-# Optional: create an R2 bucket and uncomment.
-# [[r2_buckets]]
-# binding = "MEDIA"
-# bucket_name = "clipfactory-media"
+[[r2_buckets]]
+binding = "MEDIA"
+bucket_name = "clipfactory-media"
 
 # Optional: create a Queue and uncomment.
 # [[queues.producers]]
