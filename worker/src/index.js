@@ -100,12 +100,6 @@ if(uploadCancel&&method==="POST"){
  if(!session)return json({ok:true});
  await env.MEDIA.resumeMultipartUpload(session.object_key,session.r2_upload_id).abort().catch(()=>{});
  await env.DB.prepare("DELETE FROM media_uploads WHERE id=? AND user_id=?").bind(session.id,user.id).run();
- if(session.points_charged>0){
-  await env.DB.batch([
-   env.DB.prepare("UPDATE wallets SET balance=balance+?,updated_at=datetime('now') WHERE user_id=?").bind(session.points_charged,user.id),
-   env.DB.prepare("INSERT INTO points_ledger(id,user_id,type,amount,balance_after,description) SELECT ?,?,'refund',?,balance,? FROM wallets WHERE user_id=?").bind(uid(),user.id,session.points_charged,"Refund · cancelled upload · "+session.file_name,user.id)
-  ]);
- }
  return json({ok:true});
 }
 if(path==="/media"&&method==="GET"){
