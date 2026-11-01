@@ -44,7 +44,8 @@ $("fileInput").onchange=e=>selectFiles(e.target.files);
 $("dropzone").ondragover=e=>{e.preventDefault();$("dropzone").style.borderColor="#a48aff"};
 $("dropzone").ondragleave=()=>$("dropzone").style.borderColor="";
 $("dropzone").ondrop=e=>{e.preventDefault();$("dropzone").style.borderColor="";selectFiles(e.dataTransfer.files)};
-function engineProgress(label,pct){$("engineProgress").hidden=false;$("engineStatus").textContent=label;$("enginePercent").textContent=Math.round(pct)+"%";$("engineProgressBar").style.width=Math.max(0,Math.min(100,pct))+"%"}
+let engineProgressValue=0,ffmpegProgressBase=15,ffmpegProgressSpan=75;
+function engineProgress(label,pct,reset=false){if(reset)engineProgressValue=0;engineProgressValue=Math.max(engineProgressValue,Math.max(0,Math.min(100,Number(pct)||0)));$("engineProgress").hidden=false;$("engineStatus").textContent=label;$("enginePercent").textContent=Math.round(engineProgressValue)+"%";$("engineProgressBar").style.width=engineProgressValue+"%"}
 async function getFFmpeg(){
  if(state.ffmpeg)return state.ffmpeg;
  engineProgress("Loading video engine (first run may take a moment)…",2);
@@ -52,7 +53,7 @@ async function getFFmpeg(){
  const ffmpeg=new FFmpeg();
  ffmpeg.__clipFactoryLogs=[];
  ffmpeg.on("log",({message})=>{ffmpeg.__clipFactoryLogs.push(String(message));if(ffmpeg.__clipFactoryLogs.length>80)ffmpeg.__clipFactoryLogs.shift();});
- ffmpeg.on("progress",({progress})=>engineProgress("Processing video…",Math.max(5,Math.min(94,progress*90))));
+ ffmpeg.on("progress",({progress})=>engineProgress("Processing video…",ffmpegProgressBase+Math.max(0,Math.min(1,Number(progress)||0))*ffmpegProgressSpan));
  const assetBase=window.location.origin+"/ffmpeg/";
  await ffmpeg.load({
   classWorkerURL:assetBase+"worker.js",
@@ -92,7 +93,7 @@ $("createBatch").onclick=async()=>{
  if(workflow==="subtitle"){toast("Auto subtitles are coming soon. Choose another workflow.");return}
  $("createBatch").disabled=true;$("engineResults").innerHTML="";
  try{
-  engineProgress("Creating project…",1);
+  engineProgress("Creating project…",1,true);
   const projectData=await api("/projects",{method:"POST",body:JSON.stringify({name:files.length+" video batch",kind:"Video processing",settings:{aspect,workflow,clipSeconds,fileNames:files.map(f=>f.name)}})});
   const project=projectData.project;state.projects.unshift(project);$("statProjects").textContent=state.projects.length;
   const ffmpeg=await getFFmpeg(),{fetchFile}=await import("https://esm.sh/@ffmpeg/util@0.12.2");
@@ -120,7 +121,8 @@ $("createBatch").onclick=async()=>{
     if(workflow==="resize"||workflow==="clips")args.push("-vf",videoFilter());
     const ffmpegOutput="./"+output;
     args.push("-c:v","libx264","-preset","ultrafast","-crf",workflow==="compress"?"30":"25","-c:a","aac","-b:a","128k","-movflags","+faststart",ffmpegOutput);
-    engineProgress("Rendering "+output,15+(completed/total)*75);
+    ffmpegProgressBase=15+(completed/total)*75;ffmpegProgressSpan=75/total;
+    engineProgress("Rendering "+output,ffmpegProgressBase);
     const code=await ffmpeg.exec(args);
     if(code!==0){const diagnostics=(ffmpeg.__clipFactoryLogs||[]).slice(-18).join("\n");throw new Error("FFmpeg exited with code "+code+" while rendering "+file.name+(diagnostics?"\n\nFFmpeg log:\n"+diagnostics:""));}
     const bytes=await ffmpeg.readFile(ffmpegOutput),blob=new Blob([bytes.buffer],{type:"video/mp4"});
