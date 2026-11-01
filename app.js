@@ -117,15 +117,15 @@ $("createBatch").onclick=async()=>{
     const output=base+(workflow==="clips"?"-clip-"+String(si+1).padStart(2,"0"):"-export")+".mp4";
     const args=["-ss",String(offset),"-i",input,"-t",String(seconds)];
     if(workflow==="resize"||workflow==="clips")args.push("-vf",videoFilter());
-    args.push("-c:v","libx264","-preset","ultrafast","-crf",workflow==="compress"?"30":"25","-c:a","aac","-b:a","128k","-movflags","+faststart",output);
+    const ffmpegOutput="./"+output;\n    args.push("-c:v","libx264","-preset","ultrafast","-crf",workflow==="compress"?"30":"25","-c:a","aac","-b:a","128k","-movflags","+faststart",ffmpegOutput);
     engineProgress("Rendering "+output,15+(completed/total)*75);
     const code=await ffmpeg.exec(args);
     if(code!==0){const diagnostics=(ffmpeg.__clipFactoryLogs||[]).slice(-18).join("\n");throw new Error("FFmpeg exited with code "+code+" while rendering "+file.name+(diagnostics?"\n\nFFmpeg log:\n"+diagnostics:""));}
-    const bytes=await ffmpeg.readFile(output),blob=new Blob([bytes.buffer],{type:"video/mp4"});
+    const bytes=await ffmpeg.readFile(ffmpegOutput),blob=new Blob([bytes.buffer],{type:"video/mp4"});
     const exported=new File([blob],output,{type:"video/mp4"});
     engineProgress("Saving "+output+" to cloud storage…",15+((completed+0.7)/total)*75);
     const saved=await uploadMedia(exported,project.id,"export");
-    results.push(saved.asset);await ffmpeg.deleteFile(output);completed++;
+    results.push(saved.asset);await ffmpeg.deleteFile(ffmpegOutput);completed++;
    }
    await ffmpeg.deleteFile(input);
   }
