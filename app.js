@@ -117,7 +117,8 @@ $("createBatch").onclick=async()=>{
     const output=base+(workflow==="clips"?"-clip-"+String(si+1).padStart(2,"0"):"-export")+".mp4";
     const args=["-ss",String(offset),"-i",input,"-t",String(seconds)];
     if(workflow==="resize"||workflow==="clips")args.push("-vf",videoFilter());
-    const ffmpegOutput="./"+output;\n    args.push("-c:v","libx264","-preset","ultrafast","-crf",workflow==="compress"?"30":"25","-c:a","aac","-b:a","128k","-movflags","+faststart",ffmpegOutput);
+    const ffmpegOutput="./"+output;
+    args.push("-c:v","libx264","-preset","ultrafast","-crf",workflow==="compress"?"30":"25","-c:a","aac","-b:a","128k","-movflags","+faststart",ffmpegOutput);
     engineProgress("Rendering "+output,15+(completed/total)*75);
     const code=await ffmpeg.exec(args);
     if(code!==0){const diagnostics=(ffmpeg.__clipFactoryLogs||[]).slice(-18).join("\n");throw new Error("FFmpeg exited with code "+code+" while rendering "+file.name+(diagnostics?"\n\nFFmpeg log:\n"+diagnostics:""));}
