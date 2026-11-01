@@ -3,6 +3,7 @@ main = "src/index.js"
 compatibility_date = "2026-10-30"
 
 [vars]
+ADMIN_EMAIL = "admnclip@gmail.com"
 ALLOWED_ORIGIN = "https://clipfactory-aer.pages.dev"
 
 [[d1_databases]]
