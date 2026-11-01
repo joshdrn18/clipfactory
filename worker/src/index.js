@@ -116,7 +116,7 @@ if(mediaDownload&&method==="GET"){
  if(!object)return fail("Media file is missing from storage.",404);
  return new Response(object.body,{headers:{"Content-Type":asset.content_type||"application/octet-stream","Content-Disposition":'attachment; filename="'+asset.file_name.replace(/["\\\\]/g,"_")+'"',"Cache-Control":"private, no-store"}});
 }
-const projectDelete=path.match(/^\/projects\/([\\w-]+)$/);
+const projectDelete=path.match(/^\/projects\/([\w-]+)$/);
 if(projectDelete&&method==="DELETE"){
  const project=await env.DB.prepare("SELECT id,status FROM projects WHERE id=? AND user_id=?").bind(projectDelete[1],user.id).first();
  if(!project)return fail("Project not found.",404);
@@ -129,7 +129,7 @@ if(projectDelete&&method==="DELETE"){
  await env.DB.prepare("DELETE FROM projects WHERE id=? AND user_id=? AND lower(status)='draft'").bind(project.id,user.id).run();
  return json({ok:true,deleted:true});
 }
-const projectComplete=path.match(/^\/projects\/([\\w-]+)\/complete$/);
+const projectComplete=path.match(/^\/projects\/([\w-]+)\/complete$/);
 if(projectComplete&&method==="POST"){
  const result=await env.DB.prepare("UPDATE projects SET status='completed',updated_at=datetime('now') WHERE id=? AND user_id=?").bind(projectComplete[1],user.id).run();
  if(!result.meta.changes)return fail("Project not found.",404);
