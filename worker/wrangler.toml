@@ -19,3 +19,7 @@ bucket_name = "clipfactory-media"
 # [[queues.producers]]
 # binding = "VIDEO_QUEUE"
 # queue = "clipfactory-video-jobs"
+
+[observability.logs]
+enabled = true
+invocation_logs = true
