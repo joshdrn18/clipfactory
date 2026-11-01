@@ -13,7 +13,7 @@ Automated video processing and content growth SaaS starter.
 1. Import this repository into Cloudflare Pages. Build command: leave empty. Build output directory: `/`.
 2. Deploy `worker/` as a Cloudflare Worker using `worker/wrangler.toml`.
 3. Create a D1 database and run `worker/schema.sql`.
-4. Configure Worker secrets: `SESSION_SECRET`, `ADMIN_EMAIL`, and optionally `ALLOWED_ORIGIN`.
+4. Configure Worker variables: `ADMIN_EMAIL` (the first admin account email) and `ALLOWED_ORIGIN` (your exact Pages origin).
 5. Bind D1 as `DB`; optionally bind R2 as `MEDIA` and Queue as `VIDEO_QUEUE`.
 6. Set the frontend API URL in `app.js` (or leave same-origin if you proxy `/api/*` to the Worker).
 
