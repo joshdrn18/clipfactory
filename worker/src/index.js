@@ -116,6 +116,25 @@ if(mediaDownload&&method==="GET"){
  if(!object)return fail("Media file is missing from storage.",404);
  return new Response(object.body,{headers:{"Content-Type":asset.content_type||"application/octet-stream","Content-Disposition":'attachment; filename="'+asset.file_name.replace(/["\\\\]/g,"_")+'"',"Cache-Control":"private, no-store"}});
 }
+const projectDelete=path.match(/^\/projects\/([\\w-]+)$/);
+if(projectDelete&&method==="DELETE"){
+ const project=await env.DB.prepare("SELECT id,status FROM projects WHERE id=? AND user_id=?").bind(projectDelete[1],user.id).first();
+ if(!project)return fail("Project not found.",404);
+ if(String(project.status||"draft").toLowerCase()!=="draft")return fail("Only draft projects can be deleted.",409);
+ const {results:uploads}=await env.DB.prepare("SELECT object_key,r2_upload_id FROM media_uploads WHERE project_id=? AND user_id=?").bind(project.id,user.id).all();
+ const {results:assets}=await env.DB.prepare("SELECT object_key FROM media_assets WHERE project_id=? AND user_id=?").bind(project.id,user.id).all();
+ if((uploads.length||assets.length)&&!env.MEDIA)return fail("Media storage is unavailable; project was not deleted.",503);
+ for(const upload of uploads){await env.MEDIA.resumeMultipartUpload(upload.object_key,upload.r2_upload_id).abort().catch(()=>{});}
+ for(const asset of assets){await env.MEDIA.delete(asset.object_key).catch(()=>{});}
+ await env.DB.prepare("DELETE FROM projects WHERE id=? AND user_id=? AND lower(status)='draft'").bind(project.id,user.id).run();
+ return json({ok:true,deleted:true});
+}
+const projectComplete=path.match(/^\/projects\/([\\w-]+)\/complete$/);
+if(projectComplete&&method==="POST"){
+ const result=await env.DB.prepare("UPDATE projects SET status='completed',updated_at=datetime('now') WHERE id=? AND user_id=?").bind(projectComplete[1],user.id).run();
+ if(!result.meta.changes)return fail("Project not found.",404);
+ return json({ok:true,status:"completed"});
+}
 if(path==="/projects"&&method==="POST"){const b=await body(req),name=String(b.name||"Untitled project").trim().slice(0,120),kind=String(b.kind||"Video").slice(0,40),settings=JSON.stringify(b.settings||{}),id=uid();await env.DB.prepare("INSERT INTO projects(id,user_id,name,kind,settings_json) VALUES(?,?,?,?,?)").bind(id,user.id,name,kind,settings).run();return json({project:{id,name,kind,status:"draft",created_at:new Date().toISOString()}},201)}
 
 if(path.startsWith("/admin/")&&user.role!=="admin")return fail("Admin access required.",403);
