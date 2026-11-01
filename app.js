@@ -53,8 +53,8 @@ async function getFFmpeg(){
  const assetBase=window.location.origin+"/ffmpeg/";
  await ffmpeg.load({
   classWorkerURL:assetBase+"worker.js",
-  coreURL:"https://unpkg.com/@ffmpeg/core@0.12.10/dist/umd/ffmpeg-core.js",
-  wasmURL:"https://unpkg.com/@ffmpeg/core@0.12.10/dist/umd/ffmpeg-core.wasm"
+  coreURL:"https://unpkg.com/@ffmpeg/core@0.12.10/dist/esm/ffmpeg-core.js",
+  wasmURL:"https://unpkg.com/@ffmpeg/core@0.12.10/dist/esm/ffmpeg-core.wasm"
  });
  state.ffmpeg=ffmpeg;return ffmpeg;
 }
@@ -127,7 +127,14 @@ $("createBatch").onclick=async()=>{
   $("engineStatus").textContent="Completed · "+results.length+" export(s) saved";$("enginePercent").textContent="100%";$("engineProgressBar").style.width="100%";
   $("engineResults").innerHTML='<h3>Ready to download</h3>'+results.map(x=>'<div class="engine-result"><span>'+escapeHtml(x.file_name)+' <small>· '+(x.size_bytes/1048576).toFixed(1)+' MB</small></span><button class="admin-action" data-download="'+x.id+'" data-name="'+escapeHtml(x.file_name)+'">Download</button></div>').join("");
   toast("Video processing complete!");
- }catch(e){engineProgress("Stopped: "+e.message,0);toast(e.message)}
+ }catch(e){
+  console.error("ClipFactory processing failed:",e);
+  const detail = e instanceof Error ? (e.stack || e.message) : (typeof e === "string" ? e : JSON.stringify(e) || String(e));
+  const message = e?.message || (typeof e === "string" ? e : "Unknown processing error");
+  engineProgress("Stopped: "+message,0);
+  toast(message);
+  $("engineResults").innerHTML='<div class="notice">Processing error: '+escapeHtml(detail)+'</div>';
+ }
  finally{$("createBatch").disabled=!state.files.length}
 };
 $("engineResults").onclick=async e=>{
