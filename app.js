@@ -68,6 +68,7 @@ async function uploadMedia(file,projectId,kind){
   return await api("/media/upload/"+init.upload_id+"/complete",{method:"POST",body:JSON.stringify({parts})});
  }catch(error){
   await api("/media/upload/"+init.upload_id+"/cancel",{method:"POST",body:"{}"}).catch(()=>{});
+  await refresh().catch(()=>{});
   throw error;
  }
 }
