@@ -4,7 +4,7 @@ const uid = () => crypto.randomUUID();
 const encoder = new TextEncoder();
 const hex = b => [...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,"0")).join("");
 async function digest(value){return hex(await crypto.subtle.digest("SHA-256",encoder.encode(value)))}
-async function passwordHash(password,salt){const key=await crypto.subtle.importKey("raw",encoder.encode(password),"PBKDF2",false,["deriveBits"]);return hex(await crypto.subtle.deriveBits({name:"PBKDF2",salt:encoder.encode(salt),iterations:150000,hash:"SHA-256"},key,256))}
+async function passwordHash(password,salt){const key=await crypto.subtle.importKey("raw",encoder.encode(password),"PBKDF2",false,["deriveBits"]);return hex(await crypto.subtle.deriveBits({name:"PBKDF2",salt:encoder.encode(salt),iterations:100000,hash:"SHA-256"},key,256))}
 function cors(req,env){const origin=req.headers.get("Origin")||"";const allowed=env.ALLOWED_ORIGIN||"";return {"Access-Control-Allow-Origin":allowed==="*"||origin===allowed?origin:allowed,"Access-Control-Allow-Methods":"GET,POST,OPTIONS","Access-Control-Allow-Headers":"Content-Type,Authorization","Vary":"Origin"}}
 function withCors(response,headers){const h=new Headers(response.headers);Object.entries(headers).forEach(([k,v])=>v&&h.set(k,v));return new Response(response.body,{status:response.status,headers:h})}
 async function body(req){try{return await req.json()}catch{return {}}}
