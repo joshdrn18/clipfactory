@@ -29,11 +29,14 @@ $("logoutButton").onclick=()=>{state.token="";localStorage.removeItem("cf_token"
 const templates=[["Podcast punch","Turn a long conversation into a sharp, captioned highlight.","PODCAST","Podcast"],["Product spotlight","Show the value in the first three seconds.","PRODUCT","Product"],["Storytime hook","Open a story loop that makes viewers stay.","STORY","Story"],["Before / after","A visual transformation with a clear payoff.","TRANSFORM","Before / After"],["Quick tutorial","A clean step-by-step educational short.","HOW TO","Tutorial"],["Faceless facts","Pair concise facts with bold on-screen text.","FACTS","Faceless"]];
 $("templateGrid").innerHTML=templates.map((t,i)=>'<article class="template-card"><div class="template-art">'+t[2]+'</div><div class="template-copy"><strong>'+t[0]+'</strong><p>'+t[1]+'</p><button class="text-button" data-template="'+i+'">Use template ↗</button></div></article>').join("");
 $("templateGrid").onclick=e=>{const b=e.target.closest("[data-template]");if(!b)return;showView("bulk");$("workflow").value="clips";toast(templates[Number(b.dataset.template)][0]+" selected — upload footage to continue.")};
+function uploadCost(file){return Math.ceil(file.size/(100*1024*1024))*10}
 function selectFiles(list){
- const incoming=Array.from(list),valid=incoming.filter(f=>/^video\/(mp4|quicktime|webm|x-matroska)$/.test(f.type)&&f.size<=80*1024*1024);
- if(valid.length!==incoming.length)toast("Only MP4, MOV or WEBM files up to 80 MB are accepted.");
+ const incoming=Array.from(list),valid=incoming.filter(f=>/^video\/(mp4|quicktime|webm|x-matroska)$/.test(f.type)&&f.size<=500*1024*1024);
+ if(valid.length!==incoming.length)toast("Only MP4, MOV, WEBM or MKV files up to 500 MB are accepted.");
  state.files=[...state.files,...valid].filter((f,i,a)=>a.findIndex(x=>x.name===f.name&&x.size===f.size)===i);
- $("fileList").innerHTML=state.files.map(f=>'<div class="file-item"><span>▣ '+escapeHtml(f.name)+'</span><span>'+(f.size/1048576).toFixed(1)+' MB</span></div>').join("");
+ const totalCost=state.files.reduce((sum,file)=>sum+uploadCost(file),0);
+ const costLabel=state.user?.role==="admin"?"Admin unlimited · 0 points":fmt(totalCost)+" points estimated";
+ $("fileList").innerHTML=state.files.map(f=>'<div class="file-item"><span>▣ '+escapeHtml(f.name)+'</span><span>'+(f.size/1048576).toFixed(1)+' MB · '+(state.user?.role==="admin"?"Free":uploadCost(f)+" pts")+'</span></div>').join("")+(state.files.length?'<div class="file-item"><strong>Estimated upload cost</strong><strong>'+costLabel+'</strong></div>':"");
  $("createBatch").disabled=!state.files.length;
 }
 $("fileInput").onchange=e=>selectFiles(e.target.files);
@@ -51,8 +54,22 @@ async function getFFmpeg(){
  state.ffmpeg=ffmpeg;return ffmpeg;
 }
 async function uploadMedia(file,projectId,kind){
- const form=new FormData();form.append("file",file,file.name);form.append("project_id",projectId);form.append("kind",kind);
- return api("/media/upload",{method:"POST",body:form});
+ const init=await api("/media/upload/init",{method:"POST",body:JSON.stringify({file_name:file.name,file_size:file.size,content_type:file.type,project_id:projectId,kind})});
+ if(kind==="source"&&state.user?.role!=="admin")updatePoints(init.balance,false);
+ const parts=[],chunkSize=16*1024*1024,totalParts=Math.ceil(file.size/chunkSize);
+ try{
+  for(let partNumber=1;partNumber<=totalParts;partNumber++){
+   const start=(partNumber-1)*chunkSize,end=Math.min(file.size,start+chunkSize);
+   const chunk=file.slice(start,end);
+   engineProgress("Uploading "+file.name+" · part "+partNumber+"/"+totalParts,Math.min(14,5+(partNumber/totalParts)*9));
+   const part=await api("/media/upload/"+init.upload_id+"/part?partNumber="+partNumber,{method:"PUT",body:chunk,headers:{"Content-Type":"application/octet-stream"}});
+   parts.push({partNumber:part.part_number,etag:part.etag});
+  }
+  return await api("/media/upload/"+init.upload_id+"/complete",{method:"POST",body:JSON.stringify({parts})});
+ }catch(error){
+  await api("/media/upload/"+init.upload_id+"/cancel",{method:"POST",body:"{}"}).catch(()=>{});
+  throw error;
+ }
 }
 function videoFilter(){
  const dims=$("aspect").value==="9:16"?"1080:1920":$("aspect").value==="1:1"?"1080:1080":"1920:1080";
