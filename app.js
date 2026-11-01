@@ -98,7 +98,12 @@ $("createBatch").onclick=async()=>{
    const file=files[fi],base=file.name.replace(/\.[^.]+$/,"").replace(/[^a-zA-Z0-9_-]/g,"-").slice(0,45)||"video";
    engineProgress("Uploading original "+(fi+1)+"/"+files.length+" · "+file.name,5+fi/files.length*10);
    await uploadMedia(file,project.id,"source");
-   const input="input-"+fi+"-"+Date.now()+".mp4";await ffmpeg.writeFile(input,await fetchFile(file));
+   engineProgress("Upload complete · preparing "+file.name+" for processing…",15+fi/files.length*10);
+   const input="input-"+fi+"-"+Date.now()+".mp4";
+   const inputBytes=await fetchFile(file);
+   engineProgress("Loading "+file.name+" into video engine…",16+fi/files.length*10);
+   await ffmpeg.writeFile(input,inputBytes);
+   engineProgress("Reading video duration…",17+fi/files.length*10);
    const video=document.createElement("video");video.preload="metadata";video.src=URL.createObjectURL(file);
    const duration=await new Promise(resolve=>{video.onloadedmetadata=()=>resolve(video.duration||0);video.onerror=()=>resolve(0)});
    URL.revokeObjectURL(video.src);
