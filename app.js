@@ -1,9 +1,9 @@
 const API_DEFAULT = "https://clipfactory-api.joshdrn18.workers.dev";
-const state = { token: localStorage.getItem("cf_token") || "", user: null, points: 0, projects: [], files: [], packages: [], authMode: "login", adminTab:"overview" };
+const state = { token: localStorage.getItem("cf_token") || "", user: null, points: 0, projects: [], files: [], packages: [], authMode: "login", adminTab:"overview", ffmpeg:null };
 const $ = (id) => document.getElementById(id);
 const apiBase = () => localStorage.getItem("cf_api_url") || API_DEFAULT;
 async function api(path, options={}) {
-  const headers = { "Content-Type":"application/json", ...(options.headers||{}) };
+  const isForm = options.body instanceof FormData; const headers = { ...(isForm?{}:{"Content-Type":"application/json"}), ...(options.headers||{}) };
   if (state.token) headers.Authorization = "Bearer " + state.token;
   const response = await fetch(apiBase() + "/api" + path, { ...options, headers });
   const data = await response.json().catch(()=>({error:"Invalid server response"}));
@@ -29,7 +29,13 @@ $("logoutButton").onclick=()=>{state.token="";localStorage.removeItem("cf_token"
 const templates=[["Podcast punch","Turn a long conversation into a sharp, captioned highlight.","PODCAST","Podcast"],["Product spotlight","Show the value in the first three seconds.","PRODUCT","Product"],["Storytime hook","Open a story loop that makes viewers stay.","STORY","Story"],["Before / after","A visual transformation with a clear payoff.","TRANSFORM","Before / After"],["Quick tutorial","A clean step-by-step educational short.","HOW TO","Tutorial"],["Faceless facts","Pair concise facts with bold on-screen text.","FACTS","Faceless"]];
 $("templateGrid").innerHTML=templates.map((t,i)=>'<article class="template-card"><div class="template-art">'+t[2]+'</div><div class="template-copy"><strong>'+t[0]+'</strong><p>'+t[1]+'</p><button class="text-button" data-template="'+i+'">Use template ↗</button></div></article>').join("");
 $("templateGrid").onclick=e=>{const b=e.target.closest("[data-template]");if(!b)return;showView("bulk");$("workflow").value="clips";toast(templates[Number(b.dataset.template)][0]+" selected — upload footage to continue.")};
-function selectFiles(list){state.files=[...state.files,...Array.from(list)].filter((f,i,a)=>a.findIndex(x=>x.name===f.name&&x.size===f.size)===i);$("fileList").innerHTML=state.files.map(f=>'<div class="file-item"><span>▣ '+escapeHtml(f.name)+'</span><span>'+fmt((f.size/1048576).toFixed(1))+' MB</span></div>').join("");$("createBatch").disabled=!state.files.length}
+function selectFiles(list){
+ const incoming=Array.from(list),valid=incoming.filter(f=>/^video\/(mp4|quicktime|webm|x-matroska)$/.test(f.type)&&f.size<=80*1024*1024);
+ if(valid.length!==incoming.length)toast("Only MP4, MOV or WEBM files up to 80 MB are accepted.");
+ state.files=[...state.files,...valid].filter((f,i,a)=>a.findIndex(x=>x.name===f.name&&x.size===f.size)===i);
+ $("fileList").innerHTML=state.files.map(f=>'<div class="file-item"><span>▣ '+escapeHtml(f.name)+'</span><span>'+(f.size/1048576).toFixed(1)+' MB</span></div>').join("");
+ $("createBatch").disabled=!state.files.length;
+}
 $("fileInput").onchange=e=>selectFiles(e.target.files);
 $("dropzone").ondragover=e=>{e.preventDefault();$("dropzone").style.borderColor="#a48aff"};
 $("dropzone").ondragleave=()=>$("dropzone").style.borderColor="";
