@@ -50,7 +50,12 @@ async function getFFmpeg(){
  const {FFmpeg}=await import("https://esm.sh/@ffmpeg/ffmpeg@0.12.15");
  const ffmpeg=new FFmpeg();
  ffmpeg.on("progress",({progress})=>engineProgress("Processing video…",Math.max(5,Math.min(94,progress*90))));
- await ffmpeg.load({coreURL:"https://unpkg.com/@ffmpeg/core@0.12.10/dist/umd/ffmpeg-core.js",wasmURL:"https://unpkg.com/@ffmpeg/core@0.12.10/dist/umd/ffmpeg-core.wasm"});
+ const assetBase=window.location.origin+"/ffmpeg/";
+ await ffmpeg.load({
+  classWorkerURL:assetBase+"worker.js",
+  coreURL:"https://unpkg.com/@ffmpeg/core@0.12.10/dist/umd/ffmpeg-core.js",
+  wasmURL:"https://unpkg.com/@ffmpeg/core@0.12.10/dist/umd/ffmpeg-core.wasm"
+ });
  state.ffmpeg=ffmpeg;return ffmpeg;
 }
 async function uploadMedia(file,projectId,kind){
