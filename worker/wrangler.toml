@@ -8,7 +8,7 @@ ALLOWED_ORIGIN = "https://YOUR-PAGES-DOMAIN.pages.dev"
 [[d1_databases]]
 binding = "DB"
 database_name = "clipfactory-db"
-database_id = "REPLACE_WITH_D1_DATABASE_ID"
+database_id = "0dda2127-8c55-44e0-8716-22db54dbdfb9"
 
 # Optional: create an R2 bucket and uncomment.
 # [[r2_buckets]]
