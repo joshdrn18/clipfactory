@@ -1,4 +1,4 @@
-const API_DEFAULT = "";
+const API_DEFAULT = "https://clipfactory-api.joshdrn18.workers.dev";
 const state = { token: localStorage.getItem("cf_token") || "", user: null, points: 0, projects: [], files: [], packages: [], authMode: "login" };
 const $ = (id) => document.getElementById(id);
 const apiBase = () => localStorage.getItem("cf_api_url") || API_DEFAULT;
