@@ -12,9 +12,9 @@ Automated video processing and content growth SaaS starter.
 ## Deploy
 1. Import this repository into Cloudflare Pages. Build command: leave empty. Build output directory: `.`.
 2. Deploy `worker/` as a Cloudflare Worker using `worker/wrangler.toml`.
-3. Create a D1 database and run `worker/schema.sql`.
+3. Create a D1 database and run `worker/schema.sql`. For an existing database, apply the finished-video migration: `npx wrangler d1 execute clipfactory-db --remote --file=worker/finished-videos-migration.sql`.
 4. Configure Worker variables: `ADMIN_EMAIL` (the first admin account email) and `ALLOWED_ORIGIN` (your exact Pages origin).
-5. Bind D1 as `DB`; optionally bind R2 as `MEDIA` and Queue as `VIDEO_QUEUE`.
+5. Bind D1 as `DB` and the R2 bucket as `MEDIA` (required for finished videos and uploads). Bind Queue as `VIDEO_QUEUE` only if using queued processing.
 6. Set the frontend API URL in `app.js` (or leave same-origin if you proxy `/api/*` to the Worker).
 
 ## Important launch notes
@@ -24,7 +24,7 @@ Automated video processing and content growth SaaS starter.
 - Add production email verification, password reset, rate limiting, abuse controls, and privacy/terms pages before public launch.
 
 ## Features in this starter
-- Responsive dark SaaS dashboard
+- Permanent My Videos library for finished renders, independent of draft project deletion\n- Responsive dark SaaS dashboard
 - Account registration and login
 - Points wallet, package catalog, top-up requests and ledger
 - Projects dashboard and processing queue UI
