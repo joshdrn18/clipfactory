@@ -24,7 +24,8 @@ Automated video processing and content growth SaaS starter.
 - Add production email verification, password reset, rate limiting, abuse controls, and privacy/terms pages before public launch.
 
 ## Features in this starter
-- Permanent My Videos library for finished renders, independent of draft project deletion\n- Responsive dark SaaS dashboard
+- Permanent My Videos library for finished renders, independent of draft project deletion
+- Responsive dark SaaS dashboard
 - Account registration and login
 - Points wallet, package catalog, top-up requests and ledger
 - Projects dashboard and processing queue UI
