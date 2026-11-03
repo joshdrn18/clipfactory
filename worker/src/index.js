@@ -244,7 +244,7 @@ if(adminUserDetail&&method==="GET"){
  const targetId=adminUserDetail[1];
  const account=await env.DB.prepare("SELECT id,name,email,role,status,created_at FROM users WHERE id=?").bind(targetId).first();
  if(!account)return fail("User not found.",404);
- const [wallet,projects,videos,ledger,ledgerSummary,activity,sessions]=await Promise.all([
+ const [wallet,projects,videos,ledger,ledgerSummary,activity,sessions,userActivity]=await Promise.all([
   env.DB.prepare("SELECT balance,updated_at FROM wallets WHERE user_id=?").bind(targetId).first(),
   env.DB.prepare("SELECT id,name,kind,status,created_at,updated_at FROM projects WHERE user_id=? ORDER BY created_at DESC LIMIT 100").bind(targetId).all(),
   env.DB.prepare("SELECT id,source_project_id,file_name,size_bytes,content_type,created_at FROM finished_videos WHERE user_id=? ORDER BY created_at DESC LIMIT 100").bind(targetId).all(),
