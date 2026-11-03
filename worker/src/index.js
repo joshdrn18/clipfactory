@@ -186,7 +186,7 @@ if(path==="/admin/media"&&method==="GET"){
  ]);
  return json({assets:assets.results,summary:{count:summary.count||0,bytes:summary.bytes||0,sources:summary.sources||0,exports:summary.exports||0}});
 }
-const adminMediaDelete=path.match(/^\/admin\/media\/([\\w-]+)$/);
+const adminMediaDelete=path.match(/^\/admin\/media\/([\w-]+)$/);
 if(adminMediaDelete&&method==="DELETE"){
  const asset=await env.DB.prepare("SELECT id,user_id,object_key,file_name,kind,size_bytes FROM media_assets WHERE id=?").bind(adminMediaDelete[1]).first();
  if(!asset)return fail("Media asset not found.",404);
