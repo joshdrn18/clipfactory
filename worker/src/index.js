@@ -10,11 +10,12 @@ function withCors(response,headers){const h=new Headers(response.headers);Object
 async function body(req){try{return await req.json()}catch{return {}}}
 async function auth(req,env){const token=(req.headers.get("Authorization")||"").replace(/^Bearer\s+/i,"");if(!token)return null;const hash=await digest(token);return await env.DB.prepare("SELECT u.id,u.name,u.email,u.role,u.status FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>? AND u.status='active'").bind(hash,Math.floor(Date.now()/1000)).first()}
 async function createSession(env,userId){const token=hex(crypto.getRandomValues(new Uint8Array(32)));await env.DB.prepare("INSERT INTO sessions(token_hash,user_id,expires_at) VALUES(?,?,?)").bind(await digest(token),userId,Math.floor(Date.now()/1000)+60*60*24*30).run();return token}
+async function logUserActivity(env,userId,action,details={}){try{await env.DB.prepare("INSERT INTO user_activity_logs(id,user_id,action,details) VALUES(?,?,?,?)").bind(uid(),userId,action,JSON.stringify(details)).run()}catch(e){console.warn("User activity log unavailable:",e.message)}}
 async function route(req,env){const url=new URL(req.url),path=url.pathname.replace(/^\/api/,""),method=req.method;
 if(method==="GET"&&path==="/health")return json({ok:true,service:"ClipFactory API",version:"0.1.0"});
 if(method==="GET"&&path==="/points/packages"){const {results}=await env.DB.prepare("SELECT code,name,points,price_minor,currency FROM point_packages WHERE active=1 ORDER BY sort_order").all();return json({packages:results})}
-if(method==="POST"&&path==="/auth/register"){const b=await body(req),email=String(b.email||"").trim().toLowerCase(),name=String(b.name||"").trim(),password=String(b.password||"");if(!/^\S+@\S+\.\S+$/.test(email)||password.length<8||name.length<1||name.length>80)return fail("Enter a valid name, email and password (at least 8 characters).");if(await env.DB.prepare("SELECT id FROM users WHERE email=?").bind(email).first())return fail("An account with this email already exists.",409);const id=uid(),salt=hex(crypto.getRandomValues(new Uint8Array(16))),hash=await passwordHash(password,salt),role=email===(env.ADMIN_EMAIL||"").toLowerCase()?"admin":"user";await env.DB.batch([env.DB.prepare("INSERT INTO users(id,name,email,password_hash,password_salt,role) VALUES(?,?,?,?,?,?)").bind(id,name,email,hash,salt,role),env.DB.prepare("INSERT INTO wallets(user_id,balance) VALUES(?,0)").bind(id)]);return json({token:await createSession(env,id),user:{id,name,email,role}},201)}
-if(method==="POST"&&path==="/auth/login"){const b=await body(req),email=String(b.email||"").trim().toLowerCase(),user=await env.DB.prepare("SELECT id,name,email,password_hash,password_salt,role,status FROM users WHERE email=?").bind(email).first();if(!user||await passwordHash(String(b.password||""),user.password_salt)!==user.password_hash)return fail("Email or password is incorrect.",401);if(user.status==="suspended")return fail("This account has been suspended. Contact support.",403);if(email===(env.ADMIN_EMAIL||"").toLowerCase()&&user.role!=="admin"){await env.DB.prepare("UPDATE users SET role='admin' WHERE id=?").bind(user.id).run();user.role="admin"}return json({token:await createSession(env,user.id),user:{id:user.id,name:user.name,email:user.email,role:user.role}})}
+if(method==="POST"&&path==="/auth/register"){const b=await body(req),email=String(b.email||"").trim().toLowerCase(),name=String(b.name||"").trim(),password=String(b.password||"");if(!/^\S+@\S+\.\S+$/.test(email)||password.length<8||name.length<1||name.length>80)return fail("Enter a valid name, email and password (at least 8 characters).");if(await env.DB.prepare("SELECT id FROM users WHERE email=?").bind(email).first())return fail("An account with this email already exists.",409);const id=uid(),salt=hex(crypto.getRandomValues(new Uint8Array(16))),hash=await passwordHash(password,salt),role=email===(env.ADMIN_EMAIL||"").toLowerCase()?"admin":"user";await env.DB.batch([env.DB.prepare("INSERT INTO users(id,name,email,password_hash,password_salt,role) VALUES(?,?,?,?,?,?)").bind(id,name,email,hash,salt,role),env.DB.prepare("INSERT INTO wallets(user_id,balance) VALUES(?,0)").bind(id)]);const token=await createSession(env,id);await logUserActivity(env,id,"account_registered",{});return json({token,user:{id,name,email,role}},201)}
+if(method==="POST"&&path==="/auth/login"){const b=await body(req),email=String(b.email||"").trim().toLowerCase(),user=await env.DB.prepare("SELECT id,name,email,password_hash,password_salt,role,status FROM users WHERE email=?").bind(email).first();if(!user||await passwordHash(String(b.password||""),user.password_salt)!==user.password_hash)return fail("Email or password is incorrect.",401);if(user.status==="suspended")return fail("This account has been suspended. Contact support.",403);if(email===(env.ADMIN_EMAIL||"").toLowerCase()&&user.role!=="admin"){await env.DB.prepare("UPDATE users SET role='admin' WHERE id=?").bind(user.id).run();user.role="admin"}const token=await createSession(env,user.id);await logUserActivity(env,user.id,"login",{method:"password"});return json({token,user:{id:user.id,name:user.name,email:user.email,role:user.role}})}
 const user=await auth(req,env);
 if(path==="/me"&&method==="GET"){if(!user)return fail("Please sign in.",401);const wallet=await env.DB.prepare("SELECT balance FROM wallets WHERE user_id=?").bind(user.id).first();const {results:projects}=await env.DB.prepare("SELECT id,name,kind,status,created_at FROM projects WHERE user_id=? ORDER BY created_at DESC LIMIT 100").bind(user.id).all();return json({user,wallet:{...wallet,unlimited:user.role==="admin"},projects})}
 if(!user)return fail("Please sign in.",401);
@@ -92,6 +93,7 @@ if(uploadComplete&&method==="POST"){
   }
   throw e;
  }
+ await logUserActivity(env,user.id,session.kind==="export"?"video_exported":"media_uploaded",{file_name:session.file_name,size_bytes:session.size_bytes,kind:session.kind,project_id:session.project_id});
  const wallet=await env.DB.prepare("SELECT balance FROM wallets WHERE user_id=?").bind(user.id).first();
  return json({asset:{id,project_id:session.project_id,kind:session.kind,file_name:session.file_name,size_bytes:session.size_bytes,content_type:session.content_type},points_charged:session.points_charged,balance:wallet?.balance??0,unlimited:user.role==="admin"});
 }
@@ -121,7 +123,7 @@ if(videoFile&&method==="GET"){
  const object=await env.MEDIA.get(video.object_key);
  if(!object)return fail("Video file is missing from storage.",404);
  const filename=String(video.file_name||"video.mp4").replace(/["\\\\\\r\\n]/g,"_");
- return new Response(object.body,{headers:{"Content-Type":video.content_type||"video/mp4","Content-Disposition":(videoFile[2]==="file"?"inline":"attachment")+'; filename="'+filename+'"',"Content-Length":String(object.size||0),"Accept-Ranges":"bytes","Cache-Control":"private, no-store"}});
+ await logUserActivity(env,user.id,videoFile[2]==="download"?"video_downloaded":"video_viewed",{file_name:video.file_name});return new Response(object.body,{headers:{"Content-Type":video.content_type||"video/mp4","Content-Disposition":(videoFile[2]==="file"?"inline":"attachment")+'; filename="'+filename+'"',"Content-Length":String(object.size||0),"Accept-Ranges":"bytes","Cache-Control":"private, no-store"}});
 }
 const videoRename=path.match(/^\/videos\/([\w-]+)$/);
 if(videoRename&&method==="PUT"){
@@ -129,6 +131,7 @@ if(videoRename&&method==="PUT"){
  if(!name||/[\\/\\\\\\r\\n]/.test(name))return fail("Enter a valid filename.");
  const result=await env.DB.prepare("UPDATE finished_videos SET file_name=?,updated_at=datetime('now') WHERE id=? AND user_id=?").bind(name,videoRename[1],user.id).run();
  if(!result.meta.changes)return fail("Finished video not found.",404);
+ await logUserActivity(env,user.id,"video_renamed",{video_id:videoRename[1],file_name:name});
  return json({ok:true,file_name:name});
 }
 if(videoRename&&method==="DELETE"){
@@ -138,6 +141,7 @@ if(videoRename&&method==="DELETE"){
  await env.MEDIA.delete(video.object_key);
  await env.DB.prepare("DELETE FROM finished_videos WHERE id=? AND user_id=?").bind(videoRename[1],user.id).run();
  await env.DB.prepare("DELETE FROM media_assets WHERE id=? AND user_id=? AND kind='export'").bind(videoRename[1],user.id).run();
+ await logUserActivity(env,user.id,"video_deleted",{video_id:videoRename[1]});
  return json({ok:true,deleted:true});
 }
 const mediaDownload=path.match(/^\/media\/([\w-]+)\/download$/);
@@ -160,15 +164,17 @@ if(projectDelete&&method==="DELETE"){
  for(const upload of uploads){await env.MEDIA.resumeMultipartUpload(upload.object_key,upload.r2_upload_id).abort().catch(()=>{});}
  for(const asset of assets){if(asset.kind!=="export")await env.MEDIA.delete(asset.object_key).catch(()=>{});}
  await env.DB.prepare("DELETE FROM projects WHERE id=? AND user_id=? AND lower(status)='draft'").bind(project.id,user.id).run();
+ await logUserActivity(env,user.id,"project_deleted",{project_id:project.id});
  return json({ok:true,deleted:true});
 }
 const projectComplete=path.match(/^\/projects\/([\w-]+)\/complete$/);
 if(projectComplete&&method==="POST"){
  const result=await env.DB.prepare("UPDATE projects SET status='completed',updated_at=datetime('now') WHERE id=? AND user_id=?").bind(projectComplete[1],user.id).run();
  if(!result.meta.changes)return fail("Project not found.",404);
+ await logUserActivity(env,user.id,"project_completed",{project_id:projectComplete[1]});
  return json({ok:true,status:"completed"});
 }
-if(path==="/projects"&&method==="POST"){const b=await body(req),name=String(b.name||"Untitled project").trim().slice(0,120),kind=String(b.kind||"Video").slice(0,40),settings=JSON.stringify(b.settings||{}),id=uid();await env.DB.prepare("INSERT INTO projects(id,user_id,name,kind,settings_json) VALUES(?,?,?,?,?)").bind(id,user.id,name,kind,settings).run();return json({project:{id,name,kind,status:"draft",created_at:new Date().toISOString()}},201)}
+if(path==="/projects"&&method==="POST"){const b=await body(req),name=String(b.name||"Untitled project").trim().slice(0,120),kind=String(b.kind||"Video").slice(0,40),settings=JSON.stringify(b.settings||{}),id=uid();await env.DB.prepare("INSERT INTO projects(id,user_id,name,kind,settings_json) VALUES(?,?,?,?,?)").bind(id,user.id,name,kind,settings).run();await logUserActivity(env,user.id,"project_created",{project_id:id,name,kind});return json({project:{id,name,kind,status:"draft",created_at:new Date().toISOString()}},201)}
 
 if(path.startsWith("/admin/")&&user.role!=="admin")return fail("Admin access required.",403);
 if(path==="/admin/points"&&method==="GET"){
@@ -245,9 +251,10 @@ if(adminUserDetail&&method==="GET"){
   env.DB.prepare("SELECT type,amount,balance_after,description,created_at FROM points_ledger WHERE user_id=? ORDER BY created_at DESC LIMIT 100").bind(targetId).all(),
   env.DB.prepare("SELECT COUNT(*) AS entries,COALESCE(SUM(CASE WHEN amount<0 THEN -amount ELSE 0 END),0) AS spent FROM points_ledger WHERE user_id=?").bind(targetId).first(),
   env.DB.prepare("SELECT a.action,a.details,a.created_at,u.email AS admin_email FROM admin_audit_logs a LEFT JOIN users u ON u.id=a.admin_user_id WHERE a.target_user_id=? ORDER BY a.created_at DESC LIMIT 50").bind(targetId).all(),
-  env.DB.prepare("SELECT COUNT(*) AS total,MAX(created_at) AS last_created_at FROM sessions WHERE user_id=?").bind(targetId).first()
+  env.DB.prepare("SELECT COUNT(*) AS total,MAX(created_at) AS last_created_at FROM sessions WHERE user_id=?").bind(targetId).first(),
+  env.DB.prepare("SELECT action,details,created_at FROM user_activity_logs WHERE user_id=? ORDER BY created_at DESC LIMIT 100").bind(targetId).all().catch(()=>({results:[]}))
  ]);
- return json({account,wallet:wallet||{balance:0},projects:projects.results||[],videos:videos.results||[],ledger:ledger.results||[],ledger_summary:ledgerSummary||{entries:0,spent:0},activity:activity.results||[],sessions:sessions||{total:0,last_created_at:null}});
+ return json({account,wallet:wallet||{balance:0},projects:projects.results||[],videos:videos.results||[],ledger:ledger.results||[],ledger_summary:ledgerSummary||{entries:0,spent:0},activity:activity.results||[],user_activity:userActivity.results||[],sessions:sessions||{total:0,last_created_at:null}});
 }
 const userAction=path.match(/^\/admin\/users\/([\w-]+)\/(status|points)$/);
 if(userAction&&method==="POST"){
