@@ -129,3 +129,14 @@ CREATE TABLE IF NOT EXISTS media_uploads (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS media_uploads_user_idx ON media_uploads(user_id, created_at DESC);
+
+
+-- Creator activity history.
+CREATE TABLE IF NOT EXISTS user_activity_logs (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  action TEXT NOT NULL,
+  details TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS user_activity_user_created_idx ON user_activity_logs(user_id, created_at DESC);
