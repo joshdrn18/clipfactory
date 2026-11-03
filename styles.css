@@ -63,3 +63,6 @@
 .admin-detail-panel .admin-log{padding:11px 2px}
 @media(max-width:900px){.admin-detail-grid{grid-template-columns:1fr}.admin-detail-stats{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:520px){.admin-detail-profile{align-items:flex-start}.admin-detail-row{grid-template-columns:minmax(0,1fr) auto}.admin-detail-row>small:last-child{grid-column:1/-1}}
+
+/* Live API connection indicator */
+.status-dot{white-space:nowrap}.status-dot.checking{color:#d6b979}.status-dot.checking:before{background:#d6b979;box-shadow:0 0 0 3px #d6b97922}.status-dot.offline:before{background:#e46d79;box-shadow:0 0 0 3px #e46d7922}
