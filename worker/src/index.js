@@ -233,6 +233,22 @@ if(path==="/admin/users"&&method==="GET"){
  const {results}=await env.DB.prepare("SELECT u.id,u.name,u.email,u.role,u.status,u.created_at,COALESCE(w.balance,0) AS points,(SELECT COUNT(*) FROM topups t WHERE t.user_id=u.id) AS topups_count FROM users u LEFT JOIN wallets w ON w.user_id=u.id ORDER BY u.created_at DESC LIMIT 200").all();
  return json({users:results});
 }
+const adminUserDetail=path.match(/^\/admin\/users\/([\w-]+)$/);
+if(adminUserDetail&&method==="GET"){
+ const targetId=adminUserDetail[1];
+ const account=await env.DB.prepare("SELECT id,name,email,role,status,created_at FROM users WHERE id=?").bind(targetId).first();
+ if(!account)return fail("User not found.",404);
+ const [wallet,projects,videos,ledger,ledgerSummary,activity,sessions]=await Promise.all([
+  env.DB.prepare("SELECT balance,updated_at FROM wallets WHERE user_id=?").bind(targetId).first(),
+  env.DB.prepare("SELECT id,name,kind,status,created_at,updated_at FROM projects WHERE user_id=? ORDER BY created_at DESC LIMIT 100").bind(targetId).all(),
+  env.DB.prepare("SELECT id,source_project_id,file_name,size_bytes,content_type,created_at FROM finished_videos WHERE user_id=? ORDER BY created_at DESC LIMIT 100").bind(targetId).all(),
+  env.DB.prepare("SELECT type,amount,balance_after,description,created_at FROM points_ledger WHERE user_id=? ORDER BY created_at DESC LIMIT 100").bind(targetId).all(),
+  env.DB.prepare("SELECT COUNT(*) AS entries,COALESCE(SUM(CASE WHEN amount<0 THEN -amount ELSE 0 END),0) AS spent FROM points_ledger WHERE user_id=?").bind(targetId).first(),
+  env.DB.prepare("SELECT a.action,a.details,a.created_at,u.email AS admin_email FROM admin_audit_logs a LEFT JOIN users u ON u.id=a.admin_user_id WHERE a.target_user_id=? ORDER BY a.created_at DESC LIMIT 50").bind(targetId).all(),
+  env.DB.prepare("SELECT COUNT(*) AS total,MAX(created_at) AS last_created_at FROM sessions WHERE user_id=?").bind(targetId).first()
+ ]);
+ return json({account,wallet:wallet||{balance:0},projects:projects.results||[],videos:videos.results||[],ledger:ledger.results||[],ledger_summary:ledgerSummary||{entries:0,spent:0},activity:activity.results||[],sessions:sessions||{total:0,last_created_at:null}});
+}
 const userAction=path.match(/^\/admin\/users\/([\w-]+)\/(status|points)$/);
 if(userAction&&method==="POST"){
  const target=await env.DB.prepare("SELECT id,name,email,role,status FROM users WHERE id=?").bind(userAction[1]).first();
