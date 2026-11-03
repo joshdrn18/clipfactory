@@ -1,0 +1,17 @@
+{
+  "name": "ClipFactory",
+  "short_name": "ClipFactory",
+  "description": "Make content move.",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#090b12",
+  "theme_color": "#0b0d16",
+  "icons": [
+    {
+      "src": "./favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
