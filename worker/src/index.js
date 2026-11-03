@@ -186,6 +186,16 @@ if(path==="/admin/media"&&method==="GET"){
  ]);
  return json({assets:assets.results,summary:{count:summary.count||0,bytes:summary.bytes||0,sources:summary.sources||0,exports:summary.exports||0}});
 }
+const adminMediaDownload=path.match(/^\/admin\/media\/([\w-]+)\/download$/);
+if(adminMediaDownload&&method==="GET"){
+ if(!env.MEDIA)return fail("Media storage is not configured.",503);
+ const asset=await env.DB.prepare("SELECT object_key,file_name,content_type FROM media_assets WHERE id=?").bind(adminMediaDownload[1]).first();
+ if(!asset)return fail("Media asset not found.",404);
+ const object=await env.MEDIA.get(asset.object_key);
+ if(!object)return fail("Media file is missing from storage.",404);
+ const filename=String(asset.file_name||"download").replace(/["\\\r\n]/g,"_");
+ return new Response(object.body,{headers:{"Content-Type":asset.content_type||"application/octet-stream","Content-Disposition":'attachment; filename="'+filename+'"',"Cache-Control":"private, no-store"}});
+}
 const adminMediaDelete=path.match(/^\/admin\/media\/([\w-]+)$/);
 if(adminMediaDelete&&method==="DELETE"){
  const asset=await env.DB.prepare("SELECT id,user_id,object_key,file_name,kind,size_bytes FROM media_assets WHERE id=?").bind(adminMediaDelete[1]).first();
