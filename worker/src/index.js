@@ -67,7 +67,7 @@ if(uploadComplete&&method==="POST"){
  if(session.points_charged>0){
   const charge=await env.DB.batch([
    env.DB.prepare("UPDATE wallets SET balance=balance-?,updated_at=datetime('now') WHERE user_id=? AND balance>=?").bind(session.points_charged,user.id,session.points_charged),
-   env.DB.prepare("INSERT INTO points_ledger(id,user_id,type,amount,balance_after,description) SELECT ?,?,'usage',-?,balance,? FROM wallets WHERE user_id=? AND changes()=1").bind(uid(),user.id,session.points_charged,"Video upload · "+session.file_name,user.id)
+   env.DB.prepare("INSERT INTO points_ledger(id,user_id,type,amount,balance_after,description) SELECT ?,?,'spend',-?,balance,? FROM wallets WHERE user_id=? AND changes()=1").bind(uid(),user.id,session.points_charged,"Video upload · "+session.file_name,user.id)
   ]);
   if(!charge[0].meta.changes){
    await env.MEDIA.resumeMultipartUpload(session.object_key,session.r2_upload_id).abort().catch(()=>{});
