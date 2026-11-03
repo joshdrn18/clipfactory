@@ -272,5 +272,21 @@ async function loadWallet(){if(!state.user){$("packageGrid").hidden=true;$("ledg
 $("topupForm").onsubmit=async e=>{e.preventDefault();try{const d=await api("/points/topups",{method:"POST",body:JSON.stringify({package_code:$("topupDialog").dataset.pack,note:$("paymentNote").value})});$("topupDialog").close();$("paymentNote").value="";toast("Top-up request created: "+d.topup.reference);loadWallet()}catch(err){toast(err.message)}};
 async function testApiUrl(value){const status=$("apiConnectionStatus");if(!/^https:\/\//i.test(value)){status.textContent="Enter a valid HTTPS Worker URL.";status.classList.add("offline");return false}status.textContent="Testing API connection…";status.classList.remove("offline");try{const response=await fetch(value.replace(/\/$/,"")+"/api/health",{headers:{Accept:"application/json"}});const data=await response.json();if(!response.ok||!data.ok)throw new Error(data.error||"Health check failed");status.textContent="Connected · "+(data.service||"ClipFactory API")+" · "+(data.version||"healthy");return true}catch(err){status.textContent="Connection failed: "+err.message;status.classList.add("offline");return false}}$("testApi").onclick=async()=>{const value=$("apiUrl").value.trim().replace(/\/$/,"");await testApiUrl(value)};$("saveApi").onclick=async()=>{const value=$("apiUrl").value.trim().replace(/\/$/,"");if(!await testApiUrl(value)){toast("API URL was not saved. Fix the connection first.");return}localStorage.setItem("cf_api_url",value);toast("API URL saved. Reloading connection…");setTimeout(()=>location.reload(),500)};$("apiUrl").value=apiBase();$("adminReload").onclick=()=>loadAdmin(state.adminTab);
 refresh().then(()=>{if(state.user)loadWallet()});
-async function checkApiHealth(){const indicator=document.querySelector(".status-dot");if(!indicator)return;indicator.textContent="Checking API…";try{const response=await fetch(apiBase()+"/api/health");if(!response.ok)throw new Error("API unavailable");const data=await response.json();if(!data.ok)throw new Error("API unavailable");indicator.textContent="API connected";indicator.classList.remove("offline")}catch(e){indicator.textContent="API unavailable";indicator.classList.add("offline")}}
+let healthCheckInFlight=false;
+async function checkApiHealth(){
+ const indicator=$("apiHealth");if(!indicator||healthCheckInFlight)return;
+ healthCheckInFlight=true;indicator.textContent="Checking API…";indicator.classList.remove("offline");indicator.classList.add("checking");
+ try{
+  const response=await fetch(apiBase()+"/api/health",{headers:{Accept:"application/json"},cache:"no-store"});
+  if(!response.ok)throw new Error("HTTP "+response.status);
+  const data=await response.json();if(!data.ok)throw new Error("Health check failed");
+  indicator.textContent="API connected";indicator.classList.remove("offline","checking");indicator.title=(data.service||"ClipFactory API")+" · "+(data.version||"healthy");
+ }catch(e){
+  indicator.textContent="API unavailable";indicator.classList.remove("checking");indicator.classList.add("offline");indicator.title="Could not reach the ClipFactory Worker API";
+ }finally{healthCheckInFlight=false}
+}
 checkApiHealth();
+setInterval(checkApiHealth,45000);
+window.addEventListener("online",checkApiHealth);
+window.addEventListener("offline",()=>{const indicator=$("apiHealth");if(indicator){indicator.textContent="Network offline";indicator.classList.add("offline");indicator.classList.remove("checking")}});
+
