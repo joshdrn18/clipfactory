@@ -34,3 +34,6 @@
 .video-preview video{display:block;width:100%;height:100%;object-fit:contain}
 .video-preview-load{border:1px solid #3b3457;background:#19152a;color:#c8baff;border-radius:9px;padding:10px 15px;font-weight:700}
 .video-preview-load:disabled{opacity:.6;cursor:wait}
+
+/* Action controls */
+.file-list-toolbar{display:grid;gap:8px;margin-top:12px}.file-list-toolbar .text-button{justify-self:end}.file-item{align-items:center;gap:10px}.file-item>span:first-child{min-width:0;overflow-wrap:anywhere}.file-item>span:nth-child(2){display:flex;align-items:center;gap:7px;white-space:nowrap}.growth-actions{display:flex;gap:9px;flex-wrap:wrap}.growth-actions button:disabled{opacity:.45;cursor:not-allowed}.status-dot.offline{color:#ff9a9a}.status-dot.offline:before{background:#e46d79}
