@@ -21,7 +21,13 @@ async function refresh(){if(!state.token){setUser(null);updatePoints(0);return}t
 function projectRow(p){const draft=String(p.status||"draft").toLowerCase()==="draft";return '<div class="project-row"><span>'+escapeHtml(p.name)+(draft?' <button class="admin-action danger" data-delete-project="'+escapeHtml(p.id)+'" title="Delete draft project">Delete</button>':'')+'</span><span>'+escapeHtml(p.kind||"Video")+'</span><span><i class="status-pill">'+escapeHtml(p.status||"Draft")+'</i></span><span>'+new Date(p.created_at||Date.now()).toLocaleDateString()+'</span></div>'}
 document.addEventListener("click",async e=>{const b=e.target.closest("[data-delete-project]");if(!b)return;const id=b.dataset.deleteProject;const project=state.projects.find(p=>p.id===id);if(!project)return;if(String(project.status||"draft").toLowerCase()!=="draft"){toast("Only draft projects can be deleted.");return}if(!confirm('Delete draft project "'+project.name+'"? Its uploaded source files will be deleted, but finished videos stay in My Videos. Points already used will not be refunded.'))return;b.disabled=true;try{await api("/projects/"+encodeURIComponent(id),{method:"DELETE"});state.projects=state.projects.filter(p=>p.id!==id);$("statProjects").textContent=state.projects.length;$("recentProjects").innerHTML=state.projects.slice(0,4).map(projectRow).join("")||"No projects yet — create your first batch.";renderProjects();toast("Draft project deleted.");}catch(err){b.disabled=false;toast(err.message||"Could not delete project.");}});
 function renderProjects(){$("projectList").innerHTML=state.user?(state.projects.map(projectRow).join("")||"No projects yet. Upload videos to start a project."):"Sign in to sync and manage your projects."}
-function renderQueue(){
+async function loadQueue(){
+ const root=$("queueList");if(!state.user){root.innerHTML="Sign in to view your processing activity.";return}
+ root.innerHTML='<div class="empty-state">Refreshing project status…</div>';
+ try{const d=await api("/me");state.projects=d.projects||[];$("statProjects").textContent=state.projects.length;renderProjects();renderQueueList()}catch(e){root.innerHTML='<div class="notice">Could not refresh queue: '+escapeHtml(e.message)+'</div>'}
+}
+function renderQueue(){renderQueueList()}
+function renderQueueList(){
  const root=$("queueList");if(!state.user){root.innerHTML="Sign in to view your processing activity.";return}
  const items=[...state.projects].sort((a,b)=>new Date(b.created_at||0)-new Date(a.created_at||0));
  if(!items.length){root.innerHTML='<div class="empty-state">No projects yet. Start in Bulk Upload to create your first video.</div>';return}
@@ -36,7 +42,7 @@ async function loadExportCenter(){
   root.innerHTML='<div class="table-card">'+videos.map(v=>'<div class="project-row"><span><strong>'+escapeHtml(v.file_name)+'</strong><small style="display:block;color:var(--muted)">'+escapeHtml(v.project_name||"Saved export")+'</small></span><span>'+formatBytes(v.size_bytes)+'</span><span>'+new Date(v.created_at).toLocaleDateString()+'</span><span><button class="admin-action" data-export-download="'+escapeHtml(v.id)+'" data-name="'+escapeHtml(v.file_name)+'">Download</button></span></div>').join("")+'</div>';
  }catch(e){root.innerHTML='<div class="notice">Could not load exports: '+escapeHtml(e.message)+'</div>'}
 }
-$("refreshQueue").onclick=()=>renderQueue();
+$("refreshQueue").onclick=()=>loadQueue();
 $("refreshExports").onclick=()=>loadExportCenter();
 $("exportLibrary").onclick=async e=>{
  const b=e.target.closest("[data-export-download]");if(!b)return;
