@@ -12,7 +12,7 @@ async function api(path, options={}) {
 }
 function toast(message){const el=$("toast");el.textContent=message;el.classList.add("show");setTimeout(()=>el.classList.remove("show"),2800)}
 function fmt(n){return Number(n||0).toLocaleString()}
-function showView(name){document.querySelectorAll(".view").forEach(v=>v.classList.remove("active"));$("view-"+name)?.classList.add("active");document.querySelectorAll(".nav-item").forEach(b=>b.classList.toggle("active",b.dataset.view===name));$("crumbTitle").textContent=({overview:"Overview",projects:"My Projects",videos:"My Videos",bulk:"Bulk Upload",templates:"Viral Templates",growth:"Growth Tools",queue:"Processing Queue",exports:"Export Center",wallet:"Points Wallet",settings:"Settings"})[name]||name;$("sidebar").classList.remove("open");if(name==="wallet")loadWallet();if(name==="projects")renderProjects();if(name==="videos")loadVideos();if(name==="admin")loadAdmin()}
+function showView(name){document.querySelectorAll(".view").forEach(v=>v.classList.remove("active"));$("view-"+name)?.classList.add("active");document.querySelectorAll(".nav-item").forEach(b=>b.classList.toggle("active",b.dataset.view===name));$("crumbTitle").textContent=({overview:"Overview",projects:"My Projects",videos:"My Videos",bulk:"Bulk Upload",templates:"Viral Templates",growth:"Growth Tools",queue:"Processing Queue",exports:"Export Center",wallet:"Points Wallet",admin:"Admin Billing",settings:"Settings"})[name]||name;$("sidebar").classList.remove("open");if(name==="wallet")loadWallet();if(name==="projects")renderProjects();if(name==="videos")loadVideos();if(name==="queue")renderQueue();if(name==="exports")loadExportCenter();if(name==="admin")loadAdmin()}
 document.addEventListener("click",e=>{const b=e.target.closest("[data-view]");if(b)showView(b.dataset.view)});
 $("menuBtn").onclick=()=>$("sidebar").classList.toggle("open");
 function setUser(user){state.user=user;$("adminNav").hidden=user?.role!=="admin";$("profileName").textContent=user?.name||"Guest creator";$("profileEmail").textContent=user?.email||"Sign in to sync";$("avatar").textContent=(user?.name||"G").slice(0,1).toUpperCase();$("topAvatar").textContent=$("avatar").textContent;$("authButton").textContent=user?"Account":"Sign in";$("settingsAccount").textContent=user?user.email:"You are browsing as a guest."}
@@ -21,6 +21,32 @@ async function refresh(){if(!state.token){setUser(null);updatePoints(0);return}t
 function projectRow(p){const draft=String(p.status||"draft").toLowerCase()==="draft";return '<div class="project-row"><span>'+escapeHtml(p.name)+(draft?' <button class="admin-action danger" data-delete-project="'+escapeHtml(p.id)+'" title="Delete draft project">Delete</button>':'')+'</span><span>'+escapeHtml(p.kind||"Video")+'</span><span><i class="status-pill">'+escapeHtml(p.status||"Draft")+'</i></span><span>'+new Date(p.created_at||Date.now()).toLocaleDateString()+'</span></div>'}
 document.addEventListener("click",async e=>{const b=e.target.closest("[data-delete-project]");if(!b)return;const id=b.dataset.deleteProject;const project=state.projects.find(p=>p.id===id);if(!project)return;if(String(project.status||"draft").toLowerCase()!=="draft"){toast("Only draft projects can be deleted.");return}if(!confirm('Delete draft project "'+project.name+'"? Its uploaded source files will be deleted, but finished videos stay in My Videos. Points already used will not be refunded.'))return;b.disabled=true;try{await api("/projects/"+encodeURIComponent(id),{method:"DELETE"});state.projects=state.projects.filter(p=>p.id!==id);$("statProjects").textContent=state.projects.length;$("recentProjects").innerHTML=state.projects.slice(0,4).map(projectRow).join("")||"No projects yet — create your first batch.";renderProjects();toast("Draft project deleted.");}catch(err){b.disabled=false;toast(err.message||"Could not delete project.");}});
 function renderProjects(){$("projectList").innerHTML=state.user?(state.projects.map(projectRow).join("")||"No projects yet. Upload videos to start a project."):"Sign in to sync and manage your projects."}
+function renderQueue(){
+ const root=$("queueList");if(!state.user){root.innerHTML="Sign in to view your processing activity.";return}
+ const items=[...state.projects].sort((a,b)=>new Date(b.created_at||0)-new Date(a.created_at||0));
+ if(!items.length){root.innerHTML='<div class="empty-state">No projects yet. Start in Bulk Upload to create your first video.</div>';return}
+ root.innerHTML='<div class="table-card">'+items.map(p=>'<div class="project-row"><span><strong>'+escapeHtml(p.name)+'</strong></span><span>'+escapeHtml(p.kind||"Video")+'</span><span><i class="status-pill">'+escapeHtml(p.status||"Draft")+'</i></span><span>'+new Date(p.updated_at||p.created_at||Date.now()).toLocaleString()+'</span></div>').join("")+'</div>';
+}
+async function loadExportCenter(){
+ const root=$("exportLibrary");if(!state.user){root.innerHTML="Sign in to view your exports.";return}
+ root.innerHTML='<div class="empty-state">Loading exports…</div>';
+ try{
+  const data=await api("/videos");const videos=data.videos||[];
+  if(!videos.length){root.innerHTML='<div class="empty-state">No exports yet. Finish a video in Bulk Upload and it will appear here.</div>';return}
+  root.innerHTML='<div class="table-card">'+videos.map(v=>'<div class="project-row"><span><strong>'+escapeHtml(v.file_name)+'</strong><small style="display:block;color:var(--muted)">'+escapeHtml(v.project_name||"Saved export")+'</small></span><span>'+formatBytes(v.size_bytes)+'</span><span>'+new Date(v.created_at).toLocaleDateString()+'</span><span><button class="admin-action" data-export-download="'+escapeHtml(v.id)+'" data-name="'+escapeHtml(v.file_name)+'">Download</button></span></div>').join("")+'</div>';
+ }catch(e){root.innerHTML='<div class="notice">Could not load exports: '+escapeHtml(e.message)+'</div>'}
+}
+$("refreshQueue").onclick=()=>renderQueue();
+$("refreshExports").onclick=()=>loadExportCenter();
+$("exportLibrary").onclick=async e=>{
+ const b=e.target.closest("[data-export-download]");if(!b)return;
+ try{
+  const response=await fetch(apiBase()+"/api/videos/"+encodeURIComponent(b.dataset.exportDownload)+"/download",{headers:{Authorization:"Bearer "+state.token}});
+  if(!response.ok)throw new Error("Download failed");
+  const blob=await response.blob(),url=URL.createObjectURL(blob),a=document.createElement("a");
+  a.href=url;a.download=b.dataset.name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
+ }catch(err){toast(err.message||"Could not download export.")}
+};
 function formatBytes(bytes){const n=Number(bytes)||0;if(n<1024*1024)return (n/1024).toFixed(0)+" KB";if(n<1024*1024*1024)return (n/1048576).toFixed(1)+" MB";return (n/1073741824).toFixed(2)+" GB"}
 async function loadVideos(){
  const root=$("videoLibrary");if(!state.user){root.innerHTML="Sign in to view your finished videos.";return}
@@ -44,7 +70,8 @@ $("videoLibrary").onclick=async e=>{
 };
 
 function escapeHtml(s){return String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
-$("authButton").onclick=()=>openAuth();
+$("authButton").onclick=()=>state.user?showView("settings"):openAuth();
+$("topAvatar").onclick=()=>state.user?showView("settings"):openAuth();
 $("authToggle").onclick=()=>{state.authMode=state.authMode==="login"?"register":"login";$("authTitle").textContent=state.authMode==="login"?"Your creative workspace":"Create your account";$("authName").style.display=state.authMode==="register"?"block":"none";$("authName").required=state.authMode==="register";$("authToggle").textContent=state.authMode==="login"?"Need an account? Create one":"Already have an account? Sign in"};
 function openAuth(){state.authMode="login";$("authName").style.display="none";$("authName").required=false;$("authTitle").textContent="Your creative workspace";$("authToggle").textContent="Need an account? Create one";$("authDialog").showModal()}
 $("authForm").onsubmit=async e=>{e.preventDefault();const body={email:$("authEmail").value,password:$("authPassword").value,name:$("authName").value};try{const d=await api("/auth/"+state.authMode,{method:"POST",body:JSON.stringify(body)});state.token=d.token;localStorage.setItem("cf_token",d.token);$("authDialog").close();await refresh();toast("Welcome to ClipFactory!")}catch(err){toast(err.message)}};
@@ -212,5 +239,5 @@ async function loadAdmin(tab){
 document.addEventListener("click",e=>{const b=e.target.closest("[data-admin-tab]");if(b){e.preventDefault();loadAdmin(b.dataset.adminTab)}});
 async function loadWallet(){if(!state.user){$("packageGrid").innerHTML='<div class="empty-state">Sign in to purchase points and view your wallet.</div>';return}try{const d=await api("/points");updatePoints(d.balance,d.unlimited);if(d.unlimited){$("packageGrid").innerHTML="";$("ledgerList").innerHTML='<div class="empty-state">Admin account · Unlimited points enabled. No top-up required.</div>';return}state.packages=d.packages;$("packageGrid").innerHTML=d.packages.map(p=>'<article class="package-card '+(p.code==="creator"?"featured":"")+'"><h3>'+escapeHtml(p.name)+'</h3><strong>'+fmt(p.points)+'</strong><p>points · '+escapeHtml(p.currency)+" "+fmt(p.price_minor/100)+'</p><button class="btn '+(p.code==="creator"?"btn-primary":"btn-ghost")+'" data-pack="'+escapeHtml(p.code)+'">Choose pack</button></article>').join("");$("packageGrid").onclick=e=>{const b=e.target.closest("[data-pack]");if(!b)return;const p=state.packages.find(x=>x.code===b.dataset.pack);$("topupTitle").textContent="Top up "+p.name;$("topupDescription").textContent=fmt(p.points)+" points · "+p.currency+" "+(p.price_minor/100).toFixed(2);$("topupDialog").dataset.pack=p.code;$("topupDialog").showModal()};const l=await api("/points/ledger");$("ledgerList").innerHTML=l.entries.length?l.entries.map(x=>'<div class="project-row"><span>'+escapeHtml(x.description)+'</span><span>'+escapeHtml(x.type)+'</span><span>'+((x.amount>0?"+":"")+fmt(x.amount))+' pts</span><span>'+new Date(x.created_at).toLocaleDateString()+'</span></div>').join(""):"No wallet activity yet."}catch(e){toast(e.message)}}
 $("topupForm").onsubmit=async e=>{e.preventDefault();try{const d=await api("/points/topups",{method:"POST",body:JSON.stringify({package_code:$("topupDialog").dataset.pack,note:$("paymentNote").value})});$("topupDialog").close();$("paymentNote").value="";toast("Top-up request created: "+d.topup.reference);loadWallet()}catch(err){toast(err.message)}};
-$("saveApi").onclick=()=>{localStorage.setItem("cf_api_url",$("apiUrl").value.trim().replace(/\/$/,""));toast("API URL saved. Refresh to reconnect.")};$("apiUrl").value=apiBase();
+$("saveApi").onclick=()=>{const value=$("apiUrl").value.trim().replace(/\/$/,"");if(!/^https:\/\//i.test(value)){toast("Enter a valid HTTPS Worker URL.");return}localStorage.setItem("cf_api_url",value);toast("API URL saved. Reloading connection…");setTimeout(()=>location.reload(),500)};$("apiUrl").value=apiBase();
 refresh().then(()=>{if(state.user)loadWallet()});
