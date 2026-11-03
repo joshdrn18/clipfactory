@@ -171,6 +171,25 @@ if(projectComplete&&method==="POST"){
 if(path==="/projects"&&method==="POST"){const b=await body(req),name=String(b.name||"Untitled project").trim().slice(0,120),kind=String(b.kind||"Video").slice(0,40),settings=JSON.stringify(b.settings||{}),id=uid();await env.DB.prepare("INSERT INTO projects(id,user_id,name,kind,settings_json) VALUES(?,?,?,?,?)").bind(id,user.id,name,kind,settings).run();return json({project:{id,name,kind,status:"draft",created_at:new Date().toISOString()}},201)}
 
 if(path.startsWith("/admin/")&&user.role!=="admin")return fail("Admin access required.",403);
+if(path==="/admin/points"&&method==="GET"){
+ const {results}=await env.DB.prepare("SELECT u.id,u.name,u.email,COALESCE(w.balance,0) AS balance,(SELECT COUNT(*) FROM points_ledger l WHERE l.user_id=u.id) AS ledger_count FROM users u LEFT JOIN wallets w ON w.user_id=u.id ORDER BY balance DESC,u.created_at DESC LIMIT 200").all();
+ return json({wallets:results});
+}
+if(path==="/admin/projects"&&method==="GET"){
+ const {results}=await env.DB.prepare("SELECT p.id,p.name,p.kind,p.status,p.created_at,p.updated_at,u.name AS owner_name,u.email AS owner_email FROM projects p JOIN users u ON u.id=p.user_id ORDER BY p.updated_at DESC,p.created_at DESC LIMIT 200").all();
+ return json({projects:results});
+}
+if(path==="/admin/media"&&method==="GET"){
+ const [assets,summary]=await Promise.all([
+  env.DB.prepare("SELECT m.id,m.kind,m.file_name,m.size_bytes,m.created_at,u.email AS owner_email,p.name AS project_name FROM media_assets m JOIN users u ON u.id=m.user_id LEFT JOIN projects p ON p.id=m.project_id ORDER BY m.created_at DESC LIMIT 200").all(),
+  env.DB.prepare("SELECT COUNT(*) AS count,COALESCE(SUM(size_bytes),0) AS bytes,SUM(CASE WHEN kind='source' THEN 1 ELSE 0 END) AS sources,SUM(CASE WHEN kind='export' THEN 1 ELSE 0 END) AS exports FROM media_assets").first()
+ ]);
+ return json({assets:assets.results,summary:{count:summary.count||0,bytes:summary.bytes||0,sources:summary.sources||0,exports:summary.exports||0}});
+}
+if(path==="/admin/system"&&method==="GET"){
+ const counts=await env.DB.prepare("SELECT (SELECT COUNT(*) FROM users) AS users,(SELECT COUNT(*) FROM projects) AS projects,(SELECT COUNT(*) FROM media_assets) AS media,(SELECT COUNT(*) FROM media_uploads) AS uploads").first();
+ return json({checked_at:new Date().toISOString(),api:{ok:true,detail:"Worker request handled successfully"},database:{ok:true,detail:"D1 query completed successfully"},storage:{ok:!!env.MEDIA,detail:env.MEDIA?"R2 binding MEDIA is configured":"R2 binding MEDIA is missing"},counts});
+}
 if(path==="/admin/stats"&&method==="GET"){
  const [users,pending,approved,revenue,points,projects]=await Promise.all([
   env.DB.prepare("SELECT COUNT(*) AS total,SUM(CASE WHEN status='active' THEN 1 ELSE 0 END) AS active,SUM(CASE WHEN status='suspended' THEN 1 ELSE 0 END) AS suspended FROM users").first(),
