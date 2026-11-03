@@ -80,6 +80,7 @@ if(uploadComplete&&method==="POST"){
  try{
   await multipart.complete(parts);
   await env.DB.prepare("INSERT INTO media_assets(id,user_id,project_id,kind,file_name,object_key,size_bytes,content_type) VALUES(?,?,?,?,?,?,?,?)").bind(id,user.id,session.project_id,session.kind,session.file_name,session.object_key,session.size_bytes,session.content_type).run();
+  if(session.kind==="export") await env.DB.prepare("INSERT INTO finished_videos(id,user_id,source_project_id,file_name,object_key,size_bytes,content_type) VALUES(?,?,?,?,?,?,?)").bind(id,user.id,session.project_id,session.file_name,session.object_key,session.size_bytes,session.content_type).run();
   await env.DB.prepare("DELETE FROM media_uploads WHERE id=? AND user_id=?").bind(session.id,user.id).run();
  }catch(e){
   await env.MEDIA.delete(session.object_key).catch(()=>{});
@@ -107,6 +108,38 @@ if(path==="/media"&&method==="GET"){
  const {results}=await env.DB.prepare("SELECT id,project_id,kind,file_name,size_bytes,content_type,created_at FROM media_assets WHERE user_id=? AND project_id=? ORDER BY created_at DESC LIMIT 100").bind(user.id,projectId).all();
  return json({assets:results});
 }
+if(path==="/videos"&&method==="GET"){
+ const {results}=await env.DB.prepare("SELECT v.id,v.source_project_id,v.file_name,v.size_bytes,v.content_type,v.created_at,v.updated_at,p.name AS project_name FROM finished_videos v LEFT JOIN projects p ON p.id=v.source_project_id WHERE v.user_id=? ORDER BY v.created_at DESC LIMIT 500").bind(user.id).all();
+ const total=results.reduce((sum,v)=>sum+Number(v.size_bytes||0),0);
+ return json({videos:results,storage_bytes:total,count:results.length});
+}
+const videoFile=path.match(/^\/videos\/([\w-]+)\/(file|download)$/);
+if(videoFile&&method==="GET"){
+ if(!env.MEDIA)return fail("Media storage is not configured.",503);
+ const video=await env.DB.prepare("SELECT object_key,file_name,content_type FROM finished_videos WHERE id=? AND user_id=?").bind(videoFile[1],user.id).first();
+ if(!video)return fail("Finished video not found.",404);
+ const object=await env.MEDIA.get(video.object_key);
+ if(!object)return fail("Video file is missing from storage.",404);
+ const filename=String(video.file_name||"video.mp4").replace(/["\\\\\\r\\n]/g,"_");
+ return new Response(object.body,{headers:{"Content-Type":video.content_type||"video/mp4","Content-Disposition":(videoFile[2]==="file"?"inline":"attachment")+'; filename="'+filename+'"',"Content-Length":String(object.size||0),"Accept-Ranges":"bytes","Cache-Control":"private, no-store"}});
+}
+const videoRename=path.match(/^\/videos\/([\w-]+)$/);
+if(videoRename&&method==="PUT"){
+ const b=await body(req),name=String(b.file_name||"").trim().slice(0,180);
+ if(!name||/[\\/\\\\\\r\\n]/.test(name))return fail("Enter a valid filename.");
+ const result=await env.DB.prepare("UPDATE finished_videos SET file_name=?,updated_at=datetime('now') WHERE id=? AND user_id=?").bind(name,videoRename[1],user.id).run();
+ if(!result.meta.changes)return fail("Finished video not found.",404);
+ return json({ok:true,file_name:name});
+}
+if(videoRename&&method==="DELETE"){
+ const video=await env.DB.prepare("SELECT object_key FROM finished_videos WHERE id=? AND user_id=?").bind(videoRename[1],user.id).first();
+ if(!video)return fail("Finished video not found.",404);
+ if(!env.MEDIA)return fail("Media storage is not configured.",503);
+ await env.MEDIA.delete(video.object_key);
+ await env.DB.prepare("DELETE FROM finished_videos WHERE id=? AND user_id=?").bind(videoRename[1],user.id).run();
+ await env.DB.prepare("DELETE FROM media_assets WHERE id=? AND user_id=? AND kind='export'").bind(videoRename[1],user.id).run();
+ return json({ok:true,deleted:true});
+}
 const mediaDownload=path.match(/^\/media\/([\w-]+)\/download$/);
 if(mediaDownload&&method==="GET"){
  if(!env.MEDIA)return fail("Media storage is not configured.",503);
@@ -122,10 +155,10 @@ if(projectDelete&&method==="DELETE"){
  if(!project)return fail("Project not found.",404);
  if(String(project.status||"draft").toLowerCase()!=="draft")return fail("Only draft projects can be deleted.",409);
  const {results:uploads}=await env.DB.prepare("SELECT object_key,r2_upload_id FROM media_uploads WHERE project_id=? AND user_id=?").bind(project.id,user.id).all();
- const {results:assets}=await env.DB.prepare("SELECT object_key FROM media_assets WHERE project_id=? AND user_id=?").bind(project.id,user.id).all();
- if((uploads.length||assets.length)&&!env.MEDIA)return fail("Media storage is unavailable; project was not deleted.",503);
+ const {results:assets}=await env.DB.prepare("SELECT object_key,kind FROM media_assets WHERE project_id=? AND user_id=?").bind(project.id,user.id).all();
+ if((uploads.length||assets.some(a=>a.kind!=="export"))&&!env.MEDIA)return fail("Media storage is unavailable; project was not deleted.",503);
  for(const upload of uploads){await env.MEDIA.resumeMultipartUpload(upload.object_key,upload.r2_upload_id).abort().catch(()=>{});}
- for(const asset of assets){await env.MEDIA.delete(asset.object_key).catch(()=>{});}
+ for(const asset of assets){if(asset.kind!=="export")await env.MEDIA.delete(asset.object_key).catch(()=>{});}
  await env.DB.prepare("DELETE FROM projects WHERE id=? AND user_id=? AND lower(status)='draft'").bind(project.id,user.id).run();
  return json({ok:true,deleted:true});
 }
