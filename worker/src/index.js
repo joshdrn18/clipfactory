@@ -215,7 +215,7 @@ if(path==="/admin/system"&&method==="GET"){
  return json({checked_at:new Date().toISOString(),api:{ok:true,detail:"Worker request handled successfully"},database:{ok:true,detail:"D1 query completed successfully"},storage:{ok:!!env.MEDIA,detail:env.MEDIA?"R2 binding MEDIA is configured":"R2 binding MEDIA is missing"},counts});
 }
 if(path==="/admin/stats"&&method==="GET"){
- const [users,pending,approved,revenue,points,projects]=await Promise.all([
+ const queries=await Promise.allSettled([
   env.DB.prepare("SELECT COUNT(*) AS total,SUM(CASE WHEN status='active' THEN 1 ELSE 0 END) AS active,SUM(CASE WHEN status='suspended' THEN 1 ELSE 0 END) AS suspended FROM users").first(),
   env.DB.prepare("SELECT COUNT(*) AS total FROM topups WHERE status='pending'").first(),
   env.DB.prepare("SELECT COUNT(*) AS total FROM topups WHERE status='approved'").first(),
@@ -224,7 +224,10 @@ if(path==="/admin/stats"&&method==="GET"){
   env.DB.prepare("SELECT COUNT(*) AS total FROM projects").first(),
   env.DB.prepare("SELECT COUNT(*) AS count,COALESCE(SUM(size_bytes),0) AS bytes FROM media_assets").first()
  ]);
- return json({users,pending:pending.total,approved:approved.total,revenue:revenue.results,points:points.total,projects:projects.total,media});
+ const value=(index,fallback)=>queries[index].status==="fulfilled"?queries[index].value:fallback;
+ const failed=queries.map((q,i)=>q.status==="rejected"?i:null).filter(i=>i!==null);
+ const users=value(0,{total:0,active:0,suspended:0}),pending=value(1,{total:0}),approved=value(2,{total:0}),revenue=value(3,{results:[]}),points=value(4,{total:0}),projects=value(5,{total:0}),media=value(6,{count:0,bytes:0});
+ return json({users,pending:pending.total||0,approved:approved.total||0,revenue:revenue.results||[],points:points.total||0,projects:projects.total||0,media,partial:failed.length>0,unavailable_metrics:failed});
 }
 if(path==="/admin/users"&&method==="GET"){
  const {results}=await env.DB.prepare("SELECT u.id,u.name,u.email,u.role,u.status,u.created_at,COALESCE(w.balance,0) AS points,(SELECT COUNT(*) FROM topups t WHERE t.user_id=u.id) AS topups_count FROM users u LEFT JOIN wallets w ON w.user_id=u.id ORDER BY u.created_at DESC LIMIT 200").all();
