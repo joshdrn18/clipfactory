@@ -197,9 +197,10 @@ if(path==="/admin/stats"&&method==="GET"){
   env.DB.prepare("SELECT COUNT(*) AS total FROM topups WHERE status='approved'").first(),
   env.DB.prepare("SELECT currency,COALESCE(SUM(amount_minor),0) AS amount FROM topups WHERE status='approved' GROUP BY currency").all(),
   env.DB.prepare("SELECT COALESCE(SUM(balance),0) AS total FROM wallets").first(),
-  env.DB.prepare("SELECT COUNT(*) AS total FROM projects").first()
+  env.DB.prepare("SELECT COUNT(*) AS total FROM projects").first(),
+  env.DB.prepare("SELECT COUNT(*) AS count,COALESCE(SUM(size_bytes),0) AS bytes FROM media_assets").first()
  ]);
- return json({users,pending:pending.total,approved:approved.total,revenue:revenue.results,points:points.total,projects:projects.total});
+ return json({users,pending:pending.total,approved:approved.total,revenue:revenue.results,points:points.total,projects:projects.total,media});
 }
 if(path==="/admin/users"&&method==="GET"){
  const {results}=await env.DB.prepare("SELECT u.id,u.name,u.email,u.role,u.status,u.created_at,COALESCE(w.balance,0) AS points,(SELECT COUNT(*) FROM topups t WHERE t.user_id=u.id) AS topups_count FROM users u LEFT JOIN wallets w ON w.user_id=u.id ORDER BY u.created_at DESC LIMIT 200").all();
