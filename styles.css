@@ -37,3 +37,6 @@
 
 /* Action controls */
 .file-list-toolbar{display:grid;gap:8px;margin-top:12px}.file-list-toolbar .text-button{justify-self:end}.file-item{align-items:center;gap:10px}.file-item>span:first-child{min-width:0;overflow-wrap:anywhere}.file-item>span:nth-child(2){display:flex;align-items:center;gap:7px;white-space:nowrap}.growth-actions{display:flex;gap:9px;flex-wrap:wrap}.growth-actions button:disabled{opacity:.45;cursor:not-allowed}.status-dot.offline{color:#ff9a9a}.status-dot.offline:before{background:#e46d79}
+
+/* Settings and admin controls */
+.settings-api-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:10px}.settings-api-actions .btn{flex:1;min-width:140px}#apiConnectionStatus{display:block;margin-top:10px;overflow-wrap:anywhere}#apiConnectionStatus.offline{color:#ff9a9a}#adminReload{white-space:nowrap}
