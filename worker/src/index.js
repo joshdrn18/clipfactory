@@ -186,6 +186,20 @@ if(path==="/admin/media"&&method==="GET"){
  ]);
  return json({assets:assets.results,summary:{count:summary.count||0,bytes:summary.bytes||0,sources:summary.sources||0,exports:summary.exports||0}});
 }
+const adminMediaDelete=path.match(/^\/admin\/media\/([\\w-]+)$/);
+if(adminMediaDelete&&method==="DELETE"){
+ const asset=await env.DB.prepare("SELECT id,user_id,object_key,file_name,kind,size_bytes FROM media_assets WHERE id=?").bind(adminMediaDelete[1]).first();
+ if(!asset)return fail("Media asset not found.",404);
+ if(!env.MEDIA)return fail("Media storage is not configured. No database records were changed.",503);
+ // Delete the R2 object first. Keep D1 metadata intact if R2 deletion fails.
+ await env.MEDIA.delete(asset.object_key);
+ await env.DB.batch([
+  env.DB.prepare("DELETE FROM finished_videos WHERE id=?").bind(asset.id),
+  env.DB.prepare("DELETE FROM media_assets WHERE id=?").bind(asset.id),
+  env.DB.prepare("INSERT INTO admin_audit_logs(id,admin_user_id,action,target_user_id,details) VALUES(?,?,?,?,?)").bind(uid(),user.id,"media_deleted",asset.user_id,JSON.stringify({file_name:asset.file_name,kind:asset.kind,size_bytes:asset.size_bytes}))
+ ]);
+ return json({ok:true,deleted:true,file_name:asset.file_name,size_bytes:asset.size_bytes});
+}
 if(path==="/admin/system"&&method==="GET"){
  const counts=await env.DB.prepare("SELECT (SELECT COUNT(*) FROM users) AS users,(SELECT COUNT(*) FROM projects) AS projects,(SELECT COUNT(*) FROM media_assets) AS media,(SELECT COUNT(*) FROM media_uploads) AS uploads").first();
  return json({checked_at:new Date().toISOString(),api:{ok:true,detail:"Worker request handled successfully"},database:{ok:true,detail:"D1 query completed successfully"},storage:{ok:!!env.MEDIA,detail:env.MEDIA?"R2 binding MEDIA is configured":"R2 binding MEDIA is missing"},counts});
