@@ -129,3 +129,34 @@ CREATE TABLE IF NOT EXISTS media_uploads (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS media_uploads_user_idx ON media_uploads(user_id, created_at DESC);
+
+-- Finished video library. These rows intentionally do not reference projects.
+CREATE TABLE IF NOT EXISTS finished_videos (
+ id TEXT PRIMARY KEY,
+ user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+ source_project_id TEXT NOT NULL DEFAULT '',
+ source_project_name TEXT NOT NULL DEFAULT '',
+ file_name TEXT NOT NULL,
+ object_key TEXT NOT NULL UNIQUE,
+ size_bytes INTEGER NOT NULL CHECK(size_bytes >= 0),
+ duration_seconds REAL NOT NULL DEFAULT 0 CHECK(duration_seconds >= 0),
+ content_type TEXT NOT NULL DEFAULT 'video/mp4',
+ created_at TEXT NOT NULL DEFAULT (datetime('now')),
+ updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS finished_videos_user_created_idx ON finished_videos(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS finished_videos_user_project_idx ON finished_videos(user_id, source_project_id);
+CREATE TABLE IF NOT EXISTS finished_video_uploads (
+ id TEXT PRIMARY KEY,
+ user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+ source_project_id TEXT NOT NULL DEFAULT '',
+ source_project_name TEXT NOT NULL DEFAULT '',
+ file_name TEXT NOT NULL,
+ object_key TEXT NOT NULL UNIQUE,
+ r2_upload_id TEXT NOT NULL,
+ size_bytes INTEGER NOT NULL CHECK(size_bytes > 0),
+ duration_seconds REAL NOT NULL DEFAULT 0 CHECK(duration_seconds >= 0),
+ content_type TEXT NOT NULL DEFAULT 'video/mp4',
+ created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS finished_video_uploads_user_idx ON finished_video_uploads(user_id, created_at DESC);
