@@ -102,6 +102,35 @@ $("fileInput").onchange=e=>selectFiles(e.target.files);
 $("dropzone").ondragover=e=>{e.preventDefault();$("dropzone").style.borderColor="#a48aff"};
 $("dropzone").ondragleave=()=>$("dropzone").style.borderColor="";
 $("dropzone").ondrop=e=>{e.preventDefault();$("dropzone").style.borderColor="";selectFiles(e.dataTransfer.files)};
+async function readVideoDuration(file,timeoutMs=15000){
+ const url=URL.createObjectURL(file),video=document.createElement("video");
+ video.preload="metadata";video.muted=true;video.playsInline=true;
+ return await new Promise((resolve,reject)=>{
+  let settled=false;
+  const cleanup=()=>{
+   if(settled)return;
+   settled=true;clearTimeout(timer);
+   video.onloadedmetadata=null;video.onerror=null;
+   video.removeAttribute("src");video.load();
+   URL.revokeObjectURL(url);
+  };
+  const timer=setTimeout(()=>{
+   cleanup();
+   reject(new Error("Timed out while reading video metadata. Try an MP4 (H.264/AAC) file or another video."));
+  },timeoutMs);
+  video.onloadedmetadata=()=>{
+   const duration=Number(video.duration);
+   cleanup();
+   if(Number.isFinite(duration)&&duration>0)resolve(duration);
+   else reject(new Error("Video duration is unavailable. Try converting the file to MP4 (H.264/AAC)."));
+  };
+  video.onerror=()=>{
+   cleanup();
+   reject(new Error("Your browser could not read this video's metadata. Try converting it to MP4 (H.264/AAC)."));
+  };
+  video.src=url;video.load();
+ });
+}
 let engineProgressValue=0,ffmpegProgressBase=15,ffmpegProgressSpan=75;
 function engineProgress(label,pct,reset=false){if(reset)engineProgressValue=0;engineProgressValue=Math.max(engineProgressValue,Math.max(0,Math.min(100,Number(pct)||0)));$("engineProgress").hidden=false;$("engineStatus").textContent=label;$("enginePercent").textContent=Math.round(engineProgressValue)+"%";$("engineProgressBar").style.width=engineProgressValue+"%"}
 async function getFFmpeg(){
@@ -166,9 +195,7 @@ $("createBatch").onclick=async()=>{
    engineProgress("Loading "+file.name+" into video engine…",16+fi/files.length*10);
    await ffmpeg.writeFile(input,inputBytes);
    engineProgress("Reading video duration…",17+fi/files.length*10);
-   const video=document.createElement("video");video.preload="metadata";video.src=URL.createObjectURL(file);
-   const duration=await new Promise(resolve=>{video.onloadedmetadata=()=>resolve(video.duration||0);video.onerror=()=>resolve(0)});
-   URL.revokeObjectURL(video.src);
+   const duration=await readVideoDuration(file);
    if(!duration)throw new Error("Could not read video duration for "+file.name);
    const segments=workflow==="clips"?Math.ceil(duration/clipSeconds):1;total+=segments-1;
    for(let si=0;si<segments;si++){
