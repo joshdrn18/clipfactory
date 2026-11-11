@@ -18,7 +18,7 @@ if(method==="POST"&&path==="/auth/register"){const b=await body(req),email=Strin
 if(method==="POST"&&path==="/auth/login"){const b=await body(req),email=String(b.email||"").trim().toLowerCase(),user=await env.DB.prepare("SELECT id,name,email,password_hash,password_salt,role,status FROM users WHERE email=?").bind(email).first();if(!user||await passwordHash(String(b.password||""),user.password_salt)!==user.password_hash)return fail("Email or password is incorrect.",401);if(user.status==="suspended")return fail("This account has been suspended. Contact support.",403);if(email===(env.ADMIN_EMAIL||"").toLowerCase()&&user.role!=="admin"){await env.DB.prepare("UPDATE users SET role='admin' WHERE id=?").bind(user.id).run();user.role="admin"}const token=await createSession(env,user.id);await logUserActivity(env,user.id,"login",{method:"password"});return json({token,user:{id:user.id,name:user.name,email:user.email,role:user.role}})}
 const user=await auth(req,env);
 if(path==="/auth/logout"&&method==="POST"){
- const token=(req.headers.get("Authorization")||"").replace(/^Bearer\\s+/i,"");
+ const token=(req.headers.get("Authorization")||"").replace(/^Bearer\s+/i,"");
  if(token){
   await env.DB.prepare("DELETE FROM sessions WHERE token_hash=? AND user_id=?").bind(await digest(token),user.id).run();
   await logUserActivity(env,user.id,"logout",{});
