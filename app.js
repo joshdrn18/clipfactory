@@ -92,14 +92,18 @@ const templates=[["Podcast punch","Turn a long conversation into a sharp, captio
 $("templateGrid").innerHTML=templates.map((t,i)=>'<article class="template-card"><div class="template-art">'+t[2]+'</div><div class="template-copy"><strong>'+t[0]+'</strong><p>'+t[1]+'</p><button class="text-button" data-template="'+i+'">Use template ↗</button></div></article>').join("");
 $("templateGrid").onclick=e=>{const b=e.target.closest("[data-template]");if(!b)return;showView("bulk");$("workflow").value="clips";toast(templates[Number(b.dataset.template)][0]+" selected — upload footage to continue.")};
 function uploadCost(file){return Math.ceil(file.size/(100*1024*1024))*10}
+function renderSelectedFiles(){
+ const totalBytes=state.files.reduce((n,f)=>n+f.size,0),totalCost=state.files.reduce((n,f)=>n+uploadCost(f),0);
+ $("uploadSelectionSummary").textContent=state.files.length?state.files.length+" file(s) · "+(totalBytes/1048576).toFixed(1)+" MB total · "+(state.user?.role==="admin"?"Free":fmt(totalCost)+" points estimated"):"No files selected";
+ $("fileList").innerHTML=state.files.map((f,i)=>'<div class="upload-file-card" data-upload-file="'+i+'"><div class="upload-file-top"><span class="upload-file-name">▣ '+escapeHtml(f.name)+'</span><span class="upload-file-size">'+(f.size/1048576).toFixed(1)+' MB</span><button type="button" class="admin-action danger" data-remove-file="'+i+'">Remove</button></div><div class="upload-file-progress"><span data-file-progress style="width:0%"></span></div><div class="upload-file-foot"><span data-file-status>Ready to upload</span><span data-file-percent>0%</span></div></div>').join("");
+ $("clearFiles").hidden=!state.files.length;$("createBatch").disabled=!state.files.length;
+}
+function setUploadFileStatus(index,label,percent,tone){const row=$("fileList").querySelector('[data-upload-file="'+index+'"]');if(!row)return;row.querySelector("[data-file-status]").textContent=label;row.querySelector("[data-file-percent]").textContent=Math.round(percent)+"%";row.querySelector("[data-file-progress]").style.width=Math.max(0,Math.min(100,percent))+"%";row.dataset.state=tone||"active"}
 function selectFiles(list){
  const incoming=Array.from(list),valid=incoming.filter(f=>/^video\/(mp4|quicktime|webm|x-matroska)$/.test(f.type)&&f.size<=500*1024*1024);
- if(valid.length!==incoming.length)toast("Only MP4, MOV, WEBM or MKV files up to 500 MB are accepted.");
- state.files=[...state.files,...valid].filter((f,i,a)=>a.findIndex(x=>x.name===f.name&&x.size===f.size)===i);
- const totalCost=state.files.reduce((sum,file)=>sum+uploadCost(file),0);
- const costLabel=state.user?.role==="admin"?"Admin unlimited · 0 points":fmt(totalCost)+" points estimated";
- $("fileList").innerHTML=state.files.map((f,i)=>'<div class="file-item"><span>▣ '+escapeHtml(f.name)+'</span><span>'+(f.size/1048576).toFixed(1)+' MB · '+(state.user?.role==="admin"?"Free":uploadCost(f)+" pts")+'</span><button type="button" class="admin-action danger" data-remove-file="'+i+'">Remove</button></div>').join("")+(state.files.length?'<div class="file-item"><strong>Estimated upload cost</strong><strong>'+costLabel+'</strong></div>':"");
- $("clearFiles").hidden=!state.files.length;$("createBatch").disabled=!state.files.length;
+ const rejected=incoming.length-valid.length;if(rejected)toast(rejected+" file(s) skipped. Use MP4, MOV, WEBM or MKV up to 500 MB each.");
+ state.files=[...state.files,...valid].filter((f,i,a)=>a.findIndex(x=>x.name===f.name&&x.size===f.size&&x.lastModified===f.lastModified)===i);
+ renderSelectedFiles();
 }
 $("fileList").onclick=e=>{const b=e.target.closest("[data-remove-file]");if(!b)return;state.files.splice(Number(b.dataset.removeFile),1);selectFiles([])};
 $("clearFiles").onclick=()=>{state.files=[];$("fileInput").value="";selectFiles([])};
@@ -154,7 +158,7 @@ async function getFFmpeg(){
  });
  state.ffmpeg=ffmpeg;return ffmpeg;
 }
-async function uploadMedia(file,projectId,kind,forceBackup=false){
+async function uploadMedia(file,projectId,kind,forceBackup=false,onProgress){
   const init=await api("/media/upload/init",{method:"POST",body:JSON.stringify({file_name:file.name,file_size:file.size,content_type:file.type,project_id:projectId,kind,force_backup:forceBackup})});
   const parts=[],chunkSize=16*1024*1024,totalParts=Math.ceil(file.size/chunkSize);
   try{
@@ -163,7 +167,7 @@ async function uploadMedia(file,projectId,kind,forceBackup=false){
     const chunk=file.slice(start,end);
     engineProgress("Uploading "+file.name+" · part "+partNumber+"/"+totalParts,Math.min(14,5+(partNumber/totalParts)*9));
     const part=await api("/media/upload/"+init.upload_id+"/part?partNumber="+partNumber,{method:"PUT",body:chunk,headers:{"Content-Type":"application/octet-stream"}});
-    parts.push({partNumber:part.part_number,etag:part.etag});
+    parts.push({partNumber:part.part_number,etag:part.etag});if(onProgress)onProgress(Math.round(partNumber/totalParts*100),"Uploading chunk "+partNumber+"/"+totalParts);
    }
    let completed;
    try{
@@ -182,7 +186,7 @@ async function uploadMedia(file,projectId,kind,forceBackup=false){
    await refresh().catch(()=>{});
    if(!forceBackup&&init.storage==="primary"){
     engineProgress("Primary storage unavailable. Retrying on backup storage…",5,true);
-    return uploadMedia(file,projectId,kind,true);
+    return uploadMedia(file,projectId,kind,true,onProgress);
    }
    throw error;
   }
@@ -197,7 +201,7 @@ $("createBatch").onclick=async()=>{
  const files=[...state.files],workflow=$("workflow").value,aspect=$("aspect").value,clipSeconds=Number($("clipDuration").value);
  if(workflow==="subtitle"){toast("Auto subtitles are coming soon. Choose another workflow.");return}
  $("createBatch").disabled=true;$("engineResults").innerHTML="";
- let activeFFmpeg=null;const temporaryFFmpegFiles=new Set();
+ let activeFFmpeg=null,activeFileIndex=-1;const temporaryFFmpegFiles=new Set();
  try{
   engineProgress("Creating project…",1,true);
   const projectData=await api("/projects",{method:"POST",body:JSON.stringify({name:files.length+" video batch",kind:"Video processing",settings:{aspect,workflow,clipSeconds,fileNames:files.map(f=>f.name)}})});
@@ -205,9 +209,11 @@ $("createBatch").onclick=async()=>{
   const ffmpeg=await getFFmpeg(),{fetchFile}=await import("https://esm.sh/@ffmpeg/util@0.12.2");activeFFmpeg=ffmpeg;
   const results=[];let completed=0,total=files.length;
   for(let fi=0;fi<files.length;fi++){
+   activeFileIndex=fi;setUploadFileStatus(fi,"Starting upload",0,"active");
    const file=files[fi],base=file.name.replace(/\.[^.]+$/,"").replace(/[^a-zA-Z0-9_-]/g,"-").slice(0,45)||"video";
    engineProgress("Uploading original "+(fi+1)+"/"+files.length+" · "+file.name,5+fi/files.length*10);
-   await uploadMedia(file,project.id,"source");
+   await uploadMedia(file,project.id,"source",false,(pct,label)=>setUploadFileStatus(fi,label,pct,"active"));
+   setUploadFileStatus(fi,"Original uploaded · processing",100,"uploaded");
    engineProgress("Upload complete · preparing "+file.name+" for processing…",15+fi/files.length*10);
    const input="input-"+fi+"-"+Date.now()+".mp4";
    const inputBytes=await fetchFile(file);
@@ -240,7 +246,7 @@ $("createBatch").onclick=async()=>{
    await ffmpeg.deleteFile(input);temporaryFFmpegFiles.delete(input);
   }
   await api("/projects/"+encodeURIComponent(project.id)+"/complete",{method:"POST",body:"{}"});project.status="completed";
-  state.files=[];$("fileList").innerHTML="";$("createBatch").disabled=true;
+  state.files=[];$("fileInput").value="";renderSelectedFiles();$("createBatch").disabled=true;
   $("recentProjects").innerHTML=state.projects.slice(0,4).map(projectRow).join("");renderProjects();
   $("engineStatus").textContent="Completed · "+results.length+" export(s) saved";$("enginePercent").textContent="100%";$("engineProgressBar").style.width="100%";
   $("engineResults").innerHTML='<h3>Ready to download</h3>'+results.map(x=>'<div class="engine-result"><span>'+escapeHtml(x.file_name)+' <small>· '+(x.size_bytes/1048576).toFixed(1)+' MB</small></span><button class="admin-action" data-download="'+x.id+'" data-name="'+escapeHtml(x.file_name)+'">Download</button></div>').join("");
@@ -249,6 +255,7 @@ $("createBatch").onclick=async()=>{
   console.error("ClipFactory processing failed:",e);
   const detail = e instanceof Error ? (e.stack || e.message) : (typeof e === "string" ? e : JSON.stringify(e) || String(e));
   const message = e?.message || (typeof e === "string" ? e : "Unknown processing error");
+  if(activeFileIndex>=0)setUploadFileStatus(activeFileIndex,"Stopped: "+message,0,"failed");
   engineProgress("Stopped: "+message,0);
   toast(message);
   $("engineResults").innerHTML='<div class="notice">Processing error: '+escapeHtml(detail)+'</div>';
