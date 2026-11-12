@@ -149,16 +149,16 @@ async function readVideoDuration(file,timeoutMs=15000){
  });
 }
 let engineProgressValue=0,ffmpegProgressBase=15,ffmpegProgressSpan=75;
-function engineProgress(label,pct,reset=false){if(reset)engineProgressValue=0;engineProgressValue=Math.max(engineProgressValue,Math.max(0,Math.min(100,Number(pct)||0)));$("engineProgress").hidden=false;$("engineStatus").textContent=label;$("enginePercent").textContent=Math.round(engineProgressValue)+"%";$("engineProgressBar").style.width=engineProgressValue+"%"}
+function engineProgress(label,pct,reset=false,hint=""){if(reset)engineProgressValue=0;engineProgressValue=Math.max(engineProgressValue,Math.max(0,Math.min(100,Number(pct)||0)));$("engineProgress").hidden=false;$("engineStatus").textContent=label;$("enginePercent").textContent=Math.round(engineProgressValue)+"%";$("engineProgressBar").style.width=engineProgressValue+"%";const detail=$("engineHint");if(detail)detail.textContent=hint||"Your completed exports are saved automatically as each file finishes."}
 async function getFFmpeg(){
  if(state.ffmpeg)return state.ffmpeg;
- engineProgress("Loading video engine (first run may take a moment)…",2);
+ engineProgress("Loading video engine…",2,false,"Preparing the browser-based FFmpeg engine. Keep this tab open while processing.");
  const {FFmpeg}=await Promise.race([import("https://esm.sh/@ffmpeg/ffmpeg@0.12.15"),new Promise((_,reject)=>setTimeout(()=>reject(new Error("Video engine package did not load within 60 seconds. Check your connection and retry.")),60000))]);
  const ffmpeg=new FFmpeg();
  ffmpeg.__clipFactoryLogs=[];
- ffmpeg.on("log",({message})=>{ffmpeg.__clipFactoryLogs.push(String(message));if(ffmpeg.__clipFactoryLogs.length>80)ffmpeg.__clipFactoryLogs.shift();});
- ffmpeg.__lastProgressAt=Date.now();
- ffmpeg.on("progress",({progress})=>{ffmpeg.__lastProgressAt=Date.now();engineProgress("Processing video…",ffmpegProgressBase+Math.max(0,Math.min(1,Number(progress)||0))*ffmpegProgressSpan)});
+ ffmpeg.on("log",({message})=>{ffmpeg.__lastProgressAt=Date.now();ffmpeg.__clipFactoryLogs.push(String(message));if(ffmpeg.__clipFactoryLogs.length>80)ffmpeg.__clipFactoryLogs.shift();});
+ ffmpeg.__lastProgressAt=Date.now();ffmpeg.__operationLabel="Rendering video";
+ ffmpeg.on("progress",({progress})=>{ffmpeg.__lastProgressAt=Date.now();engineProgress(ffmpeg.__operationLabel,ffmpegProgressBase+Math.max(0,Math.min(1,Number(progress)||0))*ffmpegProgressSpan,false,"FFmpeg is actively processing. Progress can pause briefly on complex video frames.")});
  const assetBase=window.location.origin+"/ffmpeg/";
  let loadTimer;
  try{
@@ -253,10 +253,10 @@ $("createBatch").onclick=async()=>{
     input="input-"+fi+"-"+Date.now()+".mp4";
     engineUsed=true;
     const inputBytes=await fetchFile(file);
-    engineProgress("Loading "+file.name+" into video engine…",16+fi/files.length*10);
+    engineProgress("Loading "+file.name+" into video engine…",16+fi/files.length*10,false,"Copying the source video into browser memory.");
     temporaryFFmpegFiles.add(input);
     await ffmpeg.writeFile(input,inputBytes);
-    engineProgress("Reading video duration…",17+fi/files.length*10);
+    engineProgress("Reading video duration…",17+fi/files.length*10,false,"Checking video metadata before rendering.");
     const duration=await readVideoDuration(file);
     if(!duration)throw new Error("Could not read video duration for "+file.name);
     const segments=workflow==="clips"?Math.ceil(duration/clipSeconds):1;
@@ -272,7 +272,8 @@ $("createBatch").onclick=async()=>{
      temporaryFFmpegFiles.add(ffmpegOutput);
      args.push("-c:v","libx264","-preset","ultrafast","-crf",workflow==="compress"?"30":"25","-c:a","aac","-b:a","128k","-movflags","+faststart",ffmpegOutput);
      ffmpegProgressBase=15+(completed/total)*75;ffmpegProgressSpan=75/total;
-     engineProgress("Rendering "+output,ffmpegProgressBase);
+     ffmpeg.__operationLabel="Rendering "+output;
+     engineProgress("Rendering "+output,ffmpegProgressBase,false,"Output "+(si+1)+" of "+segments+" for "+file.name+". This stage uses browser processing and may take time.");
      const code=await execFFmpegWithTimeout(ffmpeg,args);
      if(code!==0){
       const diagnostics=(ffmpeg.__clipFactoryLogs||[]).slice(-18).join("\n");
@@ -280,7 +281,7 @@ $("createBatch").onclick=async()=>{
      }
      const bytes=await ffmpeg.readFile(ffmpegOutput),blob=new Blob([bytes.buffer],{type:"video/mp4"});
      const exported=new File([blob],output,{type:"video/mp4"});
-     engineProgress("Saving "+output+" to cloud storage…",15+((completed+0.7)/total)*75);
+     engineProgress("Saving "+output+" to cloud storage…",15+((completed+0.7)/total)*75,false,"Uploading the finished export. It will appear in My Videos when saved.");
      const saved=await uploadMedia(exported,project.id,"export");
      results.push(saved.asset);
      fileExports++;
