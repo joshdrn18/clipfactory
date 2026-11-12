@@ -406,8 +406,10 @@ async function recordBurnedSubtitleVideo(file,cues,settings,onProgress){
   video.currentTime=0;
   await new Promise(resolve=>{if(video.currentTime===0)return resolve();video.onseeked=resolve});
   recorder.start(1000);
-  paint();
   await video.play();
+  // Start the animation loop only after playback is active; otherwise the paused
+  // state prevents requestAnimationFrame from scheduling the next video frame.
+  paint();
   await playbackEnded;
   if(recorder.state==="recording")recorder.stop();
   const blob=await result;
