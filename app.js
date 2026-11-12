@@ -882,5 +882,5 @@ window.addEventListener("online",checkApiHealth);
 window.addEventListener("offline",()=>{const indicator=$("apiHealth");if(indicator){indicator.textContent="Network offline";indicator.classList.add("offline");indicator.classList.remove("checking")}});
 
 
-$("workflow").addEventListener("change",()=>{const subtitle=$("workflow").value==="subtitle";$("createBatch").textContent=subtitle?"Generate editable subtitles →":"Upload & process videos →";$("clipDurationWrap").hidden=!($("workflow").value==="clips");$("subtitle-cost-note").hidden=!subtitle;});
+$("workflow").addEventListener("change",()=>{const selected=$("workflow").value,subtitle=selected==="subtitle",clips=selected==="clips"||selected==="highlights";$("createBatch").textContent=subtitle?"Generate editable subtitles →":selected==="highlights"?"Find highlights & render clips →":"Upload & process videos →";$("clipDurationWrap").hidden=!clips;$("subtitle-cost-note").hidden=!subtitle;});
 $("workflow").dispatchEvent(new Event("change"));
