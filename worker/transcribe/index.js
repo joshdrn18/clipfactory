@@ -30,7 +30,11 @@ export default {
    const recent=await env.DB.prepare("SELECT COUNT(*) AS total FROM user_activity_logs WHERE user_id=? AND action='subtitle_transcribed' AND created_at>=datetime('now','-1 day')").bind(user.id).first();
    if(Number(recent?.total||0)>=160)return respond({error:"Daily subtitle limit reached. Try again tomorrow."},429);
    const bytes=new Uint8Array(await audio.arrayBuffer());
-   const result=await env.AI.run("@cf/openai/whisper-large-v3-turbo",{audio:Array.from(bytes),task:"transcribe",condition_on_previous_text:false});
+   // Workers AI expects base64 audio (or a {body, contentType} object), not a numeric byte array.
+   let binary="";
+   for(let offset=0;offset<bytes.length;offset+=0x8000)binary+=String.fromCharCode(...bytes.subarray(offset,Math.min(offset+0x8000,bytes.length)));
+   const audioBase64=btoa(binary);
+   const result=await env.AI.run("@cf/openai/whisper-large-v3-turbo",{audio:audioBase64,task:"transcribe",condition_on_previous_text:false});
    const output=result?.result||result||{};
    if(!output.text&&!output.vtt)return respond({error:"No speech detected in this audio segment."},422);
    await env.DB.prepare("INSERT INTO user_activity_logs(id,user_id,action,details) VALUES(?,?,?,?)")
