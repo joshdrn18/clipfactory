@@ -83,7 +83,7 @@ if(path==="/media/upload/init"&&method==="POST"){
  const id=uid(),baseKey=user.id+"/"+projectId+"/"+id+"-"+fileName;
  let key=baseKey,multipart;
  const usage=await env.DB.prepare("SELECT COALESCE(SUM(size_bytes),0) AS bytes FROM media_assets WHERE object_key NOT LIKE 'backup/%'").first().catch(()=>({bytes:0}));
- const canBackup=!!(env.BACKUP_URL&&env.BACKUP_TOKEN),preferBackup=Number(usage?.bytes||0)>=9.5*1024*1024*1024;
+ const canBackup=!!(env.BACKUP_URL&&env.BACKUP_TOKEN),preferBackup=b.force_backup===true||Number(usage?.bytes||0)>=9.5*1024*1024*1024;
  if(preferBackup&&canBackup){
   key=BACKUP_PREFIX+baseKey;
   try{multipart=await mediaCreateMultipart(env,key,{httpMetadata:{contentType},customMetadata:{userId:user.id,projectId,kind}})}
@@ -98,7 +98,7 @@ if(path==="/media/upload/init"&&method==="POST"){
   await mediaAbort(env,key,multipart.uploadId).catch(()=>{});
   throw e;
  }
- return json({upload_id:id,points_cost:pointsCost,unlimited:user.role==="admin"},201);
+ return json({upload_id:id,points_cost:pointsCost,unlimited:user.role==="admin",storage:isBackupKey(key)?"backup":"primary"},201);
 }
 const uploadPart=path.match(/^\/media\/upload\/([\w-]+)\/part$/);
 if(uploadPart&&method==="PUT"){
