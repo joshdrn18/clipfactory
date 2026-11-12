@@ -352,26 +352,56 @@ async function transcribeAudio(form,timeoutMs=180000){
  }catch(error){if(controller.signal.aborted)throw new Error("Speech recognition timed out. Retry this audio segment.");throw error}
  finally{clearTimeout(timer)}
 }
+function wrapSubtitleLines(ctx,text,maxWidth){
+ const lines=[];let line="";
+ const tokens=String(text||"").split(/\s+/).filter(Boolean);
+ for(const token of tokens){
+  let remaining=token;
+  while(remaining){
+   const candidate=line?line+" "+remaining:remaining;
+   if(ctx.measureText(candidate).width<=maxWidth){line=candidate;remaining="";continue;}
+   if(line){lines.push(line);line="";continue;}
+   let chunk="";
+   for(const char of remaining){if(chunk&&ctx.measureText(chunk+char).width>maxWidth){lines.push(chunk);chunk="";}chunk+=char;}
+   line=chunk;remaining="";
+  }
+ }
+ if(line)lines.push(line);
+ return lines;
+}
 function drawSubtitleFrame(ctx,video,width,height,cue,settings){
  if(video)ctx.drawImage(video,0,0,width,height);
  if(!cue||!cue.text)return;
+ const safeWidth=Math.max(1,width*.88),safeHeight=Math.max(1,height*.48);
  let fontSize=(settings.size==="small"?34:settings.size==="large"?58:44)*(width/1080);
- ctx.save();ctx.font="800 "+fontSize+"px Arial, sans-serif";ctx.textAlign="center";ctx.textBaseline="middle";
- const maxWidth=width*.88,words=cleanSubtitleText(cue.text).split(/\s+/),lines=[];let line="";
- for(const word of words){const test=line?line+" "+word:word;if(ctx.measureText(test).width>maxWidth&&line){lines.push(line);line=word}else line=test}
- if(line)lines.push(line);
- while(lines.length>2&&fontSize>18){fontSize*=.9;ctx.font="800 "+fontSize+"px Arial, sans-serif";lines.length=0;line="";for(const word of words){const test=line?line+" "+word:word;if(ctx.measureText(test).width>maxWidth&&line){lines.push(line);line=word}else line=test}if(line)lines.push(line)}
- if(lines.length>3){while(lines.length>3){const tail=lines.splice(2).join(" ");lines.push(tail)}}
- const lineHeight=fontSize*1.2,pad=fontSize*.34,totalHeight=lines.length*lineHeight;
- let centerY=settings.position==="top"?height*.16+totalHeight/2:settings.position==="center"?height*.5:height*.82-totalHeight/2;
- const color=settings.color;
- if(settings.background==="box"){
-  const maxLine=Math.max(...lines.map(x=>ctx.measureText(x).width));
-  ctx.fillStyle="rgba(0,0,0,.72)";ctx.fillRect((width-maxLine)/2-pad,centerY-totalHeight/2-pad,maxLine+pad*2,totalHeight+pad*2);
+ fontSize=Math.max(12,Math.min(fontSize,height*.12));
+ let lines=[],lineHeight=0,totalHeight=0;
+ for(let attempt=0;attempt<24;attempt++){
+  ctx.font="800 "+fontSize+"px Arial, sans-serif";
+  lines=wrapSubtitleLines(ctx,cleanSubtitleText(cue.text),safeWidth);
+  lineHeight=fontSize*1.18;totalHeight=lines.length*lineHeight;
+  if((lines.length<=4&&totalHeight<=safeHeight)||fontSize<=12)break;
+  fontSize=Math.max(12,fontSize*.88);
  }
- lines.forEach((text,index)=>{const y=centerY-totalHeight/2+lineHeight*(index+.5);
-  if(settings.background==="outline"){ctx.lineJoin="round";ctx.strokeStyle="rgba(0,0,0,.96)";ctx.lineWidth=Math.max(4,fontSize*.16);ctx.strokeText(text,width/2,y,maxWidth)}
-  ctx.fillStyle=color;ctx.fillText(text,width/2,y,maxWidth);
+ if(lines.length>4){
+  const kept=lines.slice(0,3),tail=lines.slice(3).join(" ");
+  let finalTail=tail;
+  while(finalTail&&ctx.measureText(finalTail+"…").width>safeWidth)finalTail=finalTail.slice(0,-1);
+  kept.push(finalTail?finalTail.trim()+"…":"…");lines=kept;
+ }
+ lineHeight=fontSize*1.18;totalHeight=lines.length*lineHeight;
+ const pad=Math.max(5,fontSize*.34),margin=Math.max(8,height*.045);
+ let centerY=settings.position==="top"?margin+totalHeight/2+pad:settings.position==="center"?height/2:height-margin-totalHeight/2-pad;
+ centerY=Math.max(totalHeight/2+pad+margin,Math.min(height-totalHeight/2-pad-margin,centerY));
+ const maxLine=Math.min(safeWidth,Math.max(0,...lines.map(line=>ctx.measureText(line).width)));
+ const boxLeft=Math.max(0,(width-maxLine)/2-pad),boxTop=Math.max(0,centerY-totalHeight/2-pad);
+ const boxWidth=Math.min(width-boxLeft,maxLine+pad*2),boxHeight=Math.min(height-boxTop,totalHeight+pad*2);
+ ctx.save();ctx.font="800 "+fontSize+"px Arial, sans-serif";ctx.textAlign="center";ctx.textBaseline="middle";
+ if(settings.background==="box"){ctx.fillStyle="rgba(0,0,0,.76)";ctx.fillRect(boxLeft,boxTop,boxWidth,boxHeight);}
+ lines.forEach((line,index)=>{
+  const y=centerY-totalHeight/2+lineHeight*(index+.5);
+  if(settings.background==="outline"){ctx.lineJoin="round";ctx.strokeStyle="rgba(0,0,0,.96)";ctx.lineWidth=Math.max(2,fontSize*.15);ctx.strokeText(line,width/2,y,safeWidth);}
+  ctx.fillStyle=settings.color||"#ffffff";ctx.fillText(line,width/2,y,safeWidth);
  });
  ctx.restore();
 }
