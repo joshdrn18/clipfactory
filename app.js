@@ -206,10 +206,11 @@ $("createBatch").onclick=async()=>{
   engineProgress("Creating project…",1,true);
   const projectData=await api("/projects",{method:"POST",body:JSON.stringify({name:files.length+" video batch",kind:"Video processing",settings:{aspect,workflow,clipSeconds,fileNames:files.map(f=>f.name)}})});
   const project=projectData.project;state.projects.unshift(project);$("statProjects").textContent=state.projects.length;
-  const ffmpeg=await getFFmpeg(),{fetchFile}=await import("https://esm.sh/@ffmpeg/util@0.12.2");activeFFmpeg=ffmpeg;
+  let ffmpeg=await getFFmpeg();const {fetchFile}=await import("https://esm.sh/@ffmpeg/util@0.12.2");activeFFmpeg=ffmpeg;
   const results=[];let completed=0,total=files.length;
   const failedFiles=[];
   for(let fi=0;fi<files.length;fi++){
+   if(!state.ffmpeg){engineProgress("Recovering video engine before the next file…",5,true);ffmpeg=await getFFmpeg();activeFFmpeg=ffmpeg;}
    activeFileIndex=fi;
    const file=files[fi],base=file.name.replace(/\.[^.]+$/,"").replace(/[^a-zA-Z0-9_-]/g,"-").slice(0,45)||"video";
    let input="";
@@ -263,6 +264,8 @@ $("createBatch").onclick=async()=>{
     failedFiles.push({file,index:fi,message});
     setUploadFileStatus(fi,"Failed: "+message,0,"failed");
     console.error("ClipFactory file failed:",file.name,fileError);
+    // Isolate failures: a broken FFmpeg worker must not poison the next file.
+    if(state.ffmpeg===ffmpeg){try{ffmpeg.terminate()}catch(engineError){console.warn("ClipFactory engine reset:",engineError)}state.ffmpeg=null;}
    }finally{
     if(input){
      try{await ffmpeg.deleteFile(input)}catch(cleanupError){console.warn("ClipFactory input cleanup:",input,cleanupError)}
