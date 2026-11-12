@@ -154,7 +154,7 @@ const uploadCancel=path.match(/^\/media\/upload\/([\w-]+)\/cancel$/);
 if(uploadCancel&&method==="POST"){
  const session=await env.DB.prepare("SELECT * FROM media_uploads WHERE id=? AND user_id=?").bind(uploadCancel[1],user.id).first();
  if(!session)return json({ok:true});
- await env.MEDIA.resumeMultipartUpload(session.object_key,session.r2_upload_id).abort().catch(()=>{});
+ await mediaAbort(env,session.object_key,session.r2_upload_id).catch(()=>{});
  await env.DB.prepare("DELETE FROM media_uploads WHERE id=? AND user_id=?").bind(session.id,user.id).run();
  return json({ok:true});
 }
@@ -250,7 +250,7 @@ if(adminMediaDownload&&method==="GET"){
  if(!env.MEDIA)return fail("Media storage is not configured.",503);
  const asset=await env.DB.prepare("SELECT object_key,file_name,content_type FROM media_assets WHERE id=?").bind(adminMediaDownload[1]).first();
  if(!asset)return fail("Media asset not found.",404);
- const object=await env.MEDIA.get(asset.object_key);
+ const object=await mediaGet(env,asset.object_key);
  if(!object)return fail("Media file is missing from storage.",404);
  const filename=String(asset.file_name||"download").replace(/["\\\r\n]/g,"_");
  return new Response(object.body,{headers:{"Content-Type":asset.content_type||"application/octet-stream","Content-Disposition":'attachment; filename="'+filename+'"',"Cache-Control":"private, no-store"}});
