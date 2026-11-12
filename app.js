@@ -1,9 +1,18 @@
 const API_DEFAULT = "https://clipfactory-api.joshdrn18.workers.dev";
 const state = { token: localStorage.getItem("cf_token") || "", user: null, points: 0, projects: [], files: [], packages: [], authMode: "login", adminTab:"overview", ffmpeg:null,subtitleCues:[],subtitleSourceFile:null,subtitleProjectId:null,subtitlePreviewUrl:null,retryBatch:null };
 function retryCheckpointKey(user=state.user){const identity=user?.id||user?.email;return identity?"cf_retry_batch_v1:"+String(identity).toLowerCase():""}
-function persistRetryBatch(){const key=retryCheckpointKey();if(!key||!state.retryBatch)return;try{localStorage.setItem(key,JSON.stringify({version:1,project:state.retryBatch.project,settings:state.retryBatch.settings,files:state.retryBatch.files,savedAt:new Date().toISOString()}))}catch(error){console.warn("ClipFactory retry checkpoint could not be saved:",error);toast("Retry checkpoint could not be saved in this browser. Keep this tab open until exports finish.")}}
-function restoreRetryBatch(user){const key=retryCheckpointKey(user);if(!key){state.retryBatch=null;return}try{const raw=localStorage.getItem(key);if(!raw){state.retryBatch=null;return}const saved=JSON.parse(raw);if(saved?.version!==1||!saved.project?.id||!saved.settings||!saved.files||typeof saved.files!=="object")throw new Error("Invalid checkpoint");state.retryBatch={project:saved.project,settings:saved.settings,files:saved.files};}catch(error){localStorage.removeItem(key);state.retryBatch=null;console.warn("ClipFactory retry checkpoint was discarded:",error)}}
-function clearRetryBatch(){const key=retryCheckpointKey();if(key)localStorage.removeItem(key);state.retryBatch=null}
+function renderRetryCheckpointNotice(){
+ const notice=$("retryCheckpointNotice");if(!notice)return;
+ const batch=state.retryBatch;
+ if(!batch){notice.hidden=true;notice.textContent="";return}
+ const entries=Object.entries(batch.files||{}),saved=entries.reduce((n,[,entry])=>n+Object.keys(entry.savedSegments||{}).length,0);
+ const names=entries.map(([key])=>key.split("|")[0]).slice(0,3);
+ notice.hidden=false;
+ notice.textContent="Resume available · "+(batch.project?.name||"incomplete batch")+" · "+saved+" export(s) already saved. Re-select the original source file(s)"+(names.length?": "+names.join(", "):"")+" with the same workflow settings. Saved clips will be skipped.";
+}
+function persistRetryBatch(){const key=retryCheckpointKey();if(!key||!state.retryBatch)return;try{localStorage.setItem(key,JSON.stringify({version:1,project:state.retryBatch.project,settings:state.retryBatch.settings,files:state.retryBatch.files,savedAt:new Date().toISOString()}));renderRetryCheckpointNotice()}catch(error){console.warn("ClipFactory retry checkpoint could not be saved:",error);toast("Retry checkpoint could not be saved in this browser. Keep this tab open until exports finish.")}}
+function restoreRetryBatch(user){const key=retryCheckpointKey(user);if(!key){state.retryBatch=null;renderRetryCheckpointNotice();return}try{const raw=localStorage.getItem(key);if(!raw){state.retryBatch=null;renderRetryCheckpointNotice();return}const saved=JSON.parse(raw);if(saved?.version!==1||!saved.project?.id||!saved.settings||!saved.files||typeof saved.files!=="object")throw new Error("Invalid checkpoint");state.retryBatch={project:saved.project,settings:saved.settings,files:saved.files};}catch(error){localStorage.removeItem(key);state.retryBatch=null;console.warn("ClipFactory retry checkpoint was discarded:",error)}renderRetryCheckpointNotice()}
+function clearRetryBatch(){const key=retryCheckpointKey();if(key)localStorage.removeItem(key);state.retryBatch=null;renderRetryCheckpointNotice()}
 
 const $ = (id) => document.getElementById(id);
 const apiBase = () => localStorage.getItem("cf_api_url") || API_DEFAULT;
@@ -112,7 +121,7 @@ $("authForm").onsubmit=async e=>{
  }catch(err){toast(err.message)}
  finally{submit.disabled=false;submit.textContent="Continue"}
 };
-$("logoutButton").onclick=async()=>{try{await api("/auth/logout",{method:"POST",body:"{}"})}catch(e){console.warn("Server logout could not be confirmed:",e.message)}state.token="";localStorage.removeItem("cf_token");state.projects=[];state.retryBatch=null;setUser(null);updatePoints(0);$("statProjects").textContent="0";$("statExports").textContent="0";$("statQueue").textContent="—";renderProjects();$("recentProjects").textContent="Sign in to see your recent projects.";toast("Signed out")};
+$("logoutButton").onclick=async()=>{try{await api("/auth/logout",{method:"POST",body:"{}"})}catch(e){console.warn("Server logout could not be confirmed:",e.message)}state.token="";localStorage.removeItem("cf_token");state.projects=[];state.retryBatch=null;renderRetryCheckpointNotice();setUser(null);updatePoints(0);$("statProjects").textContent="0";$("statExports").textContent="0";$("statQueue").textContent="—";renderProjects();$("recentProjects").textContent="Sign in to see your recent projects.";toast("Signed out")};
 const templates=[["Podcast punch","Turn a long conversation into a sharp, captioned highlight.","PODCAST","Podcast"],["Product spotlight","Show the value in the first three seconds.","PRODUCT","Product"],["Storytime hook","Open a story loop that makes viewers stay.","STORY","Story"],["Before / after","A visual transformation with a clear payoff.","TRANSFORM","Before / After"],["Quick tutorial","A clean step-by-step educational short.","HOW TO","Tutorial"],["Faceless facts","Pair concise facts with bold on-screen text.","FACTS","Faceless"]];
 $("templateGrid").innerHTML=templates.map((t,i)=>'<article class="template-card"><div class="template-art">'+t[2]+'</div><div class="template-copy"><strong>'+t[0]+'</strong><p>'+t[1]+'</p><button class="text-button" data-template="'+i+'">Use template ↗</button></div></article>').join("");
 $("templateGrid").onclick=e=>{const b=e.target.closest("[data-template]");if(!b)return;showView("bulk");$("workflow").value="clips";toast(templates[Number(b.dataset.template)][0]+" selected — upload footage to continue.")};
