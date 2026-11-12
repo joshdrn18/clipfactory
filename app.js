@@ -182,6 +182,88 @@ async function uploadMedia(file,projectId,kind,forceBackup=false){
    throw error;
   }
  }
+function videoFilter(){
+ const dims=$("aspect").value==="9:16"?"1080:1920":$("aspect").value==="1:1"?"1080:1080":"1920:1080";
+ return "scale="+dims+":force_original_aspect_ratio=increase,crop="+dims;
+}
+$("createBatch").onclick=async()=>{
+ if(!state.files.length)return;
+ if(!state.user){openAuth();toast("Sign in to process videos.");return}
+ const files=[...state.files],workflow=$("workflow").value,aspect=$("aspect").value,clipSeconds=Number($("clipDuration").value);
+ if(workflow==="subtitle"){toast("Auto subtitles are coming soon. Choose another workflow.");return}
+ $("createBatch").disabled=true;$("engineResults").innerHTML="";
+ let activeFFmpeg=null;const temporaryFFmpegFiles=new Set();
+ try{
+  engineProgress("Creating project…",1,true);
+  const projectData=await api("/projects",{method:"POST",body:JSON.stringify({name:files.length+" video batch",kind:"Video processing",settings:{aspect,workflow,clipSeconds,fileNames:files.map(f=>f.name)}})});
+  const project=projectData.project;state.projects.unshift(project);$("statProjects").textContent=state.projects.length;
+  const ffmpeg=await getFFmpeg(),{fetchFile}=await import("https://esm.sh/@ffmpeg/util@0.12.2");activeFFmpeg=ffmpeg;
+  const results=[];let completed=0,total=files.length;
+  for(let fi=0;fi<files.length;fi++){
+   const file=files[fi],base=file.name.replace(/\.[^.]+$/,"").replace(/[^a-zA-Z0-9_-]/g,"-").slice(0,45)||"video";
+   engineProgress("Uploading original "+(fi+1)+"/"+files.length+" · "+file.name,5+fi/files.length*10);
+   await uploadMedia(file,project.id,"source");
+   engineProgress("Upload complete · preparing "+file.name+" for processing…",15+fi/files.length*10);
+   const input="input-"+fi+"-"+Date.now()+".mp4";
+   const inputBytes=await fetchFile(file);
+   engineProgress("Loading "+file.name+" into video engine…",16+fi/files.length*10);
+   temporaryFFmpegFiles.add(input);
+   await ffmpeg.writeFile(input,inputBytes);
+   engineProgress("Reading video duration…",17+fi/files.length*10);
+   const duration=await readVideoDuration(file);
+   if(!duration)throw new Error("Could not read video duration for "+file.name);
+   const segments=workflow==="clips"?Math.ceil(duration/clipSeconds):1;total+=segments-1;
+   for(let si=0;si<segments;si++){
+    const offset=workflow==="clips"?si*clipSeconds:0,seconds=workflow==="clips"?Math.min(clipSeconds,duration-offset):duration;
+    if(seconds<=0)continue;
+    const output=base+(workflow==="clips"?"-clip-"+String(si+1).padStart(2,"0"):"-export")+".mp4";
+    const args=["-ss",String(offset),"-i",input,"-t",String(seconds)];
+    if(workflow==="resize"||workflow==="clips")args.push("-vf",videoFilter());
+    const ffmpegOutput="./"+output;
+    temporaryFFmpegFiles.add(ffmpegOutput);
+    args.push("-c:v","libx264","-preset","ultrafast","-crf",workflow==="compress"?"30":"25","-c:a","aac","-b:a","128k","-movflags","+faststart",ffmpegOutput);
+    ffmpegProgressBase=15+(completed/total)*75;ffmpegProgressSpan=75/total;
+    engineProgress("Rendering "+output,ffmpegProgressBase);
+    const code=await ffmpeg.exec(args);
+    if(code!==0){const diagnostics=(ffmpeg.__clipFactoryLogs||[]).slice(-18).join("\n");throw new Error("FFmpeg exited with code "+code+" while rendering "+file.name+(diagnostics?"\n\nFFmpeg log:\n"+diagnostics:""));}
+    const bytes=await ffmpeg.readFile(ffmpegOutput),blob=new Blob([bytes.buffer],{type:"video/mp4"});
+    const exported=new File([blob],output,{type:"video/mp4"});
+    engineProgress("Saving "+output+" to cloud storage…",15+((completed+0.7)/total)*75);
+    const saved=await uploadMedia(exported,project.id,"export");
+    results.push(saved.asset);await ffmpeg.deleteFile(ffmpegOutput);temporaryFFmpegFiles.delete(ffmpegOutput);completed++;
+   }
+   await ffmpeg.deleteFile(input);temporaryFFmpegFiles.delete(input);
+  }
+  await api("/projects/"+encodeURIComponent(project.id)+"/complete",{method:"POST",body:"{}"});project.status="completed";
+  state.files=[];$("fileList").innerHTML="";$("createBatch").disabled=true;
+  $("recentProjects").innerHTML=state.projects.slice(0,4).map(projectRow).join("");renderProjects();
+  $("engineStatus").textContent="Completed · "+results.length+" export(s) saved";$("enginePercent").textContent="100%";$("engineProgressBar").style.width="100%";
+  $("engineResults").innerHTML='<h3>Ready to download</h3>'+results.map(x=>'<div class="engine-result"><span>'+escapeHtml(x.file_name)+' <small>· '+(x.size_bytes/1048576).toFixed(1)+' MB</small></span><button class="admin-action" data-download="'+x.id+'" data-name="'+escapeHtml(x.file_name)+'">Download</button></div>').join("");
+  toast("Video processing complete!");
+ }catch(e){
+  console.error("ClipFactory processing failed:",e);
+  const detail = e instanceof Error ? (e.stack || e.message) : (typeof e === "string" ? e : JSON.stringify(e) || String(e));
+  const message = e?.message || (typeof e === "string" ? e : "Unknown processing error");
+  engineProgress("Stopped: "+message,0);
+  toast(message);
+  $("engineResults").innerHTML='<div class="notice">Processing error: '+escapeHtml(detail)+'</div>';
+ }
+ finally{
+  if(activeFFmpeg){for(const tempFile of temporaryFFmpegFiles){try{await activeFFmpeg.deleteFile(tempFile)}catch(cleanupError){console.warn("ClipFactory temporary-file cleanup:",tempFile,cleanupError)}}}
+  temporaryFFmpegFiles.clear();$("createBatch").disabled=!state.files.length
+ }
+};
+$("engineResults").onclick=async e=>{
+ const b=e.target.closest("[data-download]");if(!b)return;
+ try{
+  const response=await fetch(apiBase()+"/api/media/"+b.dataset.download+"/download",{headers:{Authorization:"Bearer "+state.token}});
+  if(!response.ok)throw new Error("Download failed");
+  const blob=await response.blob(),url=URL.createObjectURL(blob),a=document.createElement("a");
+  a.href=url;a.download=b.dataset.name;document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url);
+ }catch(err){toast(err.message)}
+};
+$("copyGrowth").onclick=async()=>{const content=$("growthOutput").innerText.trim();if(!content||content.startsWith("Your hooks"))return;try{await navigator.clipboard.writeText(content);toast("Growth ideas copied.")}catch(e){toast("Clipboard access was blocked by your browser.")}};
+$("generateCopy").onclick=()=>{const topic=$("topic").value.trim();if(!topic){toast("Add a short description first.");return}const platform=$("platform").value,tone=$("tone").value;const clean=topic.replace(/[.!?]+$/,"");$("copyGrowth").disabled=false;$("growthOutput").innerHTML='<strong>HOOK IDEAS</strong><br>1. "You need to see this if you love '+escapeHtml(clean.toLowerCase())+'."<br>2. "I wish I knew this sooner…"<br>3. "Here’s the part nobody talks about."<br><br><strong>CAPTION STARTER</strong><br>'+escapeHtml(clean)+'. Save this for later and tell me what you think.<br><br><strong>HASHTAG IDEAS</strong><br>#'+clean.split(/\s+/).slice(0,2).map(x=>x.replace(/[^a-z0-9]/gi,"")).filter(Boolean).join("")+' #'+platform.replace(/\s+/g,"")+' #CreatorTips #ContentIdeas<br><br><small>Draft suggestions · '+tone+' tone · Review and tailor before posting.</small>'};
 async function loadAdminUserDetail(userId){
  const root=$("adminContent");root.onclick=null;root.innerHTML='<div class="empty-state">Loading creator account…</div>';
  try{
