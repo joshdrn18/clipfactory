@@ -239,15 +239,23 @@ $("createBatch").onclick=async()=>{
   let ffmpeg=await getFFmpeg();const {fetchFile}=await import("https://esm.sh/@ffmpeg/util@0.12.2");activeFFmpeg=ffmpeg;
   const results=[];
   const failedFiles=[];
+  // Read every source duration up front so the batch progress denominator is stable.
+  const durations=[],metadataErrors=[];
+  for(let mi=0;mi<files.length;mi++){
+   engineProgress("Checking video "+(mi+1)+"/"+files.length+"…",Math.max(engineProgressValue,3+(mi/files.length)*10),false,"Reading duration before uploads so progress can account for every output.");
+   try{durations[mi]=await readVideoDuration(files[mi]);metadataErrors[mi]="";}
+   catch(metadataError){durations[mi]=0;metadataErrors[mi]=metadataError?.message||"Could not read video metadata.";}
+  }
+  const totalTasks=Math.max(1,durations.reduce((sum,d)=>sum+(d>0?(workflow==="clips"?Math.ceil(d/clipSeconds):1):0),0));
+  let completedTasks=0;
   for(let fi=0;fi<files.length;fi++){
    activeFileIndex=fi;
    const file=files[fi],base=file.name.replace(/\.[^.]+$/,"").replace(/[^a-zA-Z0-9_-]/g,"-").slice(0,45)||"video";
-   let input="",engineUsed=false;
+   let input="",engineUsed=false,plannedSegments=0,fileExports=0;
    try{
     if(!state.ffmpeg){engineProgress("Recovering video engine before the next file…",engineProgressValue,false);ffmpeg=await getFFmpeg();activeFFmpeg=ffmpeg;}
-    engineProgress("Reading video duration…",Math.max(engineProgressValue,15+(fi/files.length)*75),false,"Checking this source before uploading or copying it into browser memory.");
-    const duration=await readVideoDuration(file);
-    if(!duration)throw new Error("Could not read video duration for "+file.name);
+    const duration=durations[fi];
+    if(!duration)throw new Error(metadataErrors[fi]||("Could not read video duration for "+file.name));
     setUploadFileStatus(fi,"Starting upload",0,"active");
     engineProgress("Uploading original "+(fi+1)+"/"+files.length+" · "+file.name,5+fi/files.length*10);
     await uploadMedia(file,project.id,"source",false,(pct,label)=>setUploadFileStatus(fi,label,pct,"active"));
@@ -260,7 +268,7 @@ $("createBatch").onclick=async()=>{
     temporaryFFmpegFiles.add(input);
     await ffmpeg.writeFile(input,inputBytes);
     const segments=workflow==="clips"?Math.ceil(duration/clipSeconds):1;
-    let fileExports=0;
+    plannedSegments=segments;
     for(let si=0;si<segments;si++){
      const offset=workflow==="clips"?si*clipSeconds:0,seconds=workflow==="clips"?Math.min(clipSeconds,duration-offset):duration;
      if(seconds<=0)continue;
@@ -270,7 +278,7 @@ $("createBatch").onclick=async()=>{
      const ffmpegOutput="./"+output;
      temporaryFFmpegFiles.add(ffmpegOutput);
      args.push("-c:v","libx264","-preset","ultrafast","-crf",workflow==="compress"?"30":"25","-c:a","aac","-b:a","128k","-movflags","+faststart",ffmpegOutput);
-     const taskProgressSpan=75/(files.length*segments);ffmpegProgressBase=15+((fi+(si/segments))/files.length)*75;ffmpegProgressSpan=taskProgressSpan*0.8;
+     const taskProgressSpan=75/totalTasks;ffmpegProgressBase=15+(completedTasks/totalTasks)*75;ffmpegProgressSpan=taskProgressSpan*0.8;
      ffmpeg.__operationLabel="Rendering "+output;
      engineProgress("Rendering "+output,ffmpegProgressBase,false,"Output "+(si+1)+" of "+segments+" for "+file.name+". This stage uses browser processing and may take time.");
      const code=await execFFmpegWithTimeout(ffmpeg,args);
@@ -284,6 +292,7 @@ $("createBatch").onclick=async()=>{
      const saved=await uploadMedia(exported,project.id,"export");
      results.push(saved.asset);
      fileExports++;
+     completedTasks++;
      await ffmpeg.deleteFile(ffmpegOutput);
      temporaryFFmpegFiles.delete(ffmpegOutput);
      engineProgress("Export saved · "+output,ffmpegProgressBase+taskProgressSpan,false,"Finished export "+(si+1)+" of "+segments+" for "+file.name+".");
@@ -291,6 +300,8 @@ $("createBatch").onclick=async()=>{
     if(!fileExports)throw new Error("No export was produced for "+file.name);
     setUploadFileStatus(fi,"Completed · "+fileExports+" export(s) saved",100,"success");
    }catch(fileError){
+    // Count the failed file's remaining outputs as skipped so later files still advance the batch.
+    completedTasks+=Math.max(0,plannedSegments-fileExports);
     const message=fileError?.message||"Unknown file processing error";
     failedFiles.push({file,index:fi,message});
     setUploadFileStatus(fi,"Failed: "+message,0,"failed");
