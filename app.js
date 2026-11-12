@@ -906,8 +906,10 @@ $("createBatch").onclick=async()=>{
      const renderLog=(ffmpeg.__clipFactoryLogs||[]).join("\n");
      const outputLog=renderLog.slice(Math.max(0,renderLog.lastIndexOf("Output #0")));
      if(!/Video:\s*h264/i.test(outputLog))throw new Error("The export did not contain a confirmed H.264 video stream. It was not uploaded.");
-     const sourceHasAudio=/Input #0[\\s\\S]*?Audio:/i.test(renderLog);
+     const sourceHasAudio=/Input #0[\s\S]*?Audio:/i.test(renderLog);
      if(sourceHasAudio&&!/Audio:\s*aac/i.test(outputLog))throw new Error("The source contains audio, but the export did not contain a confirmed AAC audio stream. It was not uploaded to prevent silent output.");
+     const durationCheck=await verifySubtitleMp4Duration(ffmpeg,ffmpegOutput,seconds);
+     if(sourceHasAudio&&!/Audio:\s*aac/i.test(durationCheck.probeLog))throw new Error("The finished MP4 duration was checked, but its AAC audio stream could not be confirmed. The export was not saved.");
      let outputBytes=await ffmpeg.readFile(ffmpegOutput);
      if(!outputBytes||outputBytes.byteLength<1024||String.fromCharCode(...outputBytes.slice(4,8))!=="ftyp")throw new Error("The export is not a valid MP4 file. It was not uploaded.");
      const exported=new File([outputBytes],output,{type:"video/mp4"});
