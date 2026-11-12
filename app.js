@@ -259,16 +259,32 @@ function normalizeSubtitleCues(input,duration=Infinity){
    if(line&&(candidate.length>38||line.split(" ").length>=7)){parts.push(line);line=word}else line=candidate;
   }
   if(line)parts.push(line);
-  const weights=parts.map(part=>Math.max(1,part.split(" ").length)),total=weights.reduce((a,b)=>a+b,0),span=end-start;
+  const span=end-start;
+  // Do not split a short utterance into captions that flash too quickly.
+  if(parts.length>1&&span<parts.length*.65){output.push({start,end,text});continue}
+  const weights=parts.map(part=>Math.max(1,part.split(" ").length)),total=weights.reduce((a,b)=>a+b,0);
   let cursor=start;
   parts.forEach((part,index)=>{
    const partEnd=index===parts.length-1?end:cursor+span*weights[index]/total;
-   output.push({start:cursor,end:Math.max(cursor+.12,partEnd),text:part});
+   output.push({start:cursor,end:Math.max(cursor+.2,partEnd),text:part});
    cursor=partEnd;
   });
  }
  output.sort((a,b)=>a.start-b.start);
- return output.filter((cue,index)=>cue.end>cue.start&&(!index||cue.start>=output[index-1].start));
+ // Prevent adjacent Whisper segments from producing overlapping captions.
+ for(let i=0;i<output.length-1;i++){
+  const current=output[i],next=output[i+1];
+  if(current.end>next.start){
+   const clipped=next.start-current.start;
+   if(clipped>=.2)current.end=next.start;
+   else if((current.text+" "+next.text).length<=76){
+    current.text=(current.text+" "+next.text).trim();
+    current.end=Math.max(current.end,next.end);
+    output.splice(i+1,1);i--;
+   }else current.end=Math.max(current.start+.2,next.start);
+  }
+ }
+ return output.filter(cue=>cue.end>cue.start&&cue.start<duration);
 }
 function formatVttTime(seconds){
  const ms=Math.max(0,Math.round(Number(seconds||0)*1000)),h=Math.floor(ms/3600000),m=Math.floor(ms%3600000/60000),s=Math.floor(ms%60000/1000),r=ms%1000;
@@ -359,7 +375,7 @@ function drawSubtitleFrame(ctx,video,width,height,cue,settings){
 }
 async function recordBurnedSubtitleVideo(file,cues,settings,onProgress){
  const video=document.createElement("video"),url=URL.createObjectURL(file),canvas=document.createElement("canvas"),ctx=canvas.getContext("2d",{alpha:false});
- video.src=url;video.muted=true;video.playsInline=true;video.preload="auto";
+ video.src=url;video.muted=false;video.volume=1;video.playsInline=true;video.preload="auto";
  const metadataReady=new Promise((resolve,reject)=>{video.onloadedmetadata=resolve;video.onerror=()=>reject(new Error("The source video could not be opened by this browser."));});
  await metadataReady;
  const ratio=Math.min(1,1920/Math.max(video.videoWidth,video.videoHeight));
