@@ -247,11 +247,13 @@ function parseSubtitleVtt(vtt,offset=0){
  }
  return cues;
 }
+function cleanSubtitleText(value){
+ return String(value||"").replace(/<[^>]*>/g," ").replace(/\\N/g," ").replace(/&nbsp;/gi," ").replace(/&amp;/gi,"&").replace(/&quot;/gi,'"').replace(/&#39;|&apos;/gi,"'").replace(/&lt;/gi,"<").replace(/&gt;/gi,">").replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g," ").replace(/\s+/g," ").trim();
+}
 function normalizeSubtitleCues(input,duration=Infinity){
  const output=[];
- const clean=value=>String(value||"").replace(/<[^>]*>/g," ").replace(/&amp;/gi,"&").replace(/&lt;/gi,"<").replace(/&gt;/gi,">").replace(/&quot;/gi,'"').replace(/&#39;|&apos;/gi,"'").replace(/\s+/g," ").trim();
  for(const raw of (input||[])){
-  const text=clean(raw.text),start=Math.max(0,Number(raw.start)||0),end=Math.min(duration,Math.max(start+.2,Number(raw.end)||start+.2));
+  const text=cleanSubtitleText(raw.text),start=Math.max(0,Number(raw.start)||0),end=Math.min(duration,Math.max(start+.2,Number(raw.end)||start+.2));
   if(!text||end<=start)continue;
   const words=text.split(" "),parts=[];let line="";
   for(const word of words){
@@ -259,39 +261,29 @@ function normalizeSubtitleCues(input,duration=Infinity){
    if(line&&(candidate.length>38||line.split(" ").length>=7)){parts.push(line);line=word}else line=candidate;
   }
   if(line)parts.push(line);
-  const span=end-start;
-  // Do not split a short utterance into captions that flash too quickly.
-  if(parts.length>1&&span<parts.length*.65){output.push({start,end,text});continue}
-  const weights=parts.map(part=>Math.max(1,part.split(" ").length)),total=weights.reduce((a,b)=>a+b,0);
+  const span=end-start,weights=parts.map(part=>Math.max(1,part.split(" ").length)),total=weights.reduce((a,b)=>a+b,0);
   let cursor=start;
   parts.forEach((part,index)=>{
    const partEnd=index===parts.length-1?end:cursor+span*weights[index]/total;
-   output.push({start:cursor,end:Math.max(cursor+.2,partEnd),text:part});
+   output.push({start:cursor,end:Math.max(cursor+.05,partEnd),text:part});
    cursor=partEnd;
   });
  }
- output.sort((a,b)=>a.start-b.start);
- // Prevent adjacent Whisper segments from producing overlapping captions.
- for(let i=0;i<output.length-1;i++){
-  const current=output[i],next=output[i+1];
-  if(current.end>next.start){
-   const clipped=next.start-current.start;
-   if(clipped>=.2)current.end=next.start;
-   else {
-    // Very close segment boundaries can otherwise leave overlapping captions.
-    // Move the next cue forward by a fraction of a second rather than extending
-    // the current cue over it; this preserves a clean, non-overlapping timeline.
-    const adjustedStart=current.start+.2;
-    if(next.end>adjustedStart){
-     next.start=adjustedStart;
-     current.end=adjustedStart;
-    }else{
-     current.end=Math.max(current.start+.05,next.start);
-    }
-   }
+ output.sort((a,b)=>a.start-b.start||a.end-b.end);
+ // Rebuild a strictly ordered timeline. If Whisper segments overlap, preserve
+ // their wording and move the later caption after the previous caption.
+ const clean=[];
+ for(const cue of output){
+  let start=Math.max(0,Number(cue.start)||0),end=Math.max(start+.05,Number(cue.end)||start+.05);
+  const previous=clean[clean.length-1];
+  if(previous&&start<previous.end)start=previous.end;
+  if(Number.isFinite(duration)){
+   if(start>=duration)continue;
+   end=Math.min(duration,Math.max(start+.05,end));
   }
+  if(end>start)clean.push({start,end,text:cue.text});
  }
- return output.filter(cue=>cue.end>cue.start&&cue.start<duration);
+ return clean;
 }
 function formatVttTime(seconds){
  const ms=Math.max(0,Math.round(Number(seconds||0)*1000)),h=Math.floor(ms/3600000),m=Math.floor(ms%3600000/60000),s=Math.floor(ms%60000/1000),r=ms%1000;
@@ -365,11 +357,11 @@ function drawSubtitleFrame(ctx,video,width,height,cue,settings){
  if(!cue||!cue.text)return;
  let fontSize=(settings.size==="small"?34:settings.size==="large"?58:44)*(width/1080);
  ctx.save();ctx.font="800 "+fontSize+"px Arial, sans-serif";ctx.textAlign="center";ctx.textBaseline="middle";
- const maxWidth=width*.88,words=String(cue.text).replace(/<[^>]*>/g,"").split(/\s+/),lines=[];let line="";
+ const maxWidth=width*.88,words=cleanSubtitleText(cue.text).split(/\s+/),lines=[];let line="";
  for(const word of words){const test=line?line+" "+word:word;if(ctx.measureText(test).width>maxWidth&&line){lines.push(line);line=word}else line=test}
  if(line)lines.push(line);
  while(lines.length>2&&fontSize>18){fontSize*=.9;ctx.font="800 "+fontSize+"px Arial, sans-serif";lines.length=0;line="";for(const word of words){const test=line?line+" "+word:word;if(ctx.measureText(test).width>maxWidth&&line){lines.push(line);line=word}else line=test}if(line)lines.push(line)}
- if(lines.length>2){const last=lines.slice(1).join(" ");lines.splice(1,lines.length-1,last)}
+ if(lines.length>3){while(lines.length>3){const tail=lines.splice(2).join(" ");lines.push(tail)}}
  const lineHeight=fontSize*1.2,pad=fontSize*.34,totalHeight=lines.length*lineHeight;
  let centerY=settings.position==="top"?height*.16+totalHeight/2:settings.position==="center"?height*.5:height*.82-totalHeight/2;
  const color=settings.color;
@@ -462,18 +454,19 @@ async function recordBurnedSubtitleVideo(file,cues,settings,onProgress){
   throw error;
  }finally{stopTracks()}
 }
-function validateSubtitleCuesForRender(cues){
+function validateSubtitleCuesForRender(cues,duration=Infinity){
  const ordered=[...(cues||[])].sort((a,b)=>Number(a.start)-Number(b.start));
  for(let i=0;i<ordered.length;i++){
   const cue=ordered[i],start=Number(cue.start),end=Number(cue.end);
   if(!Number.isFinite(start)||!Number.isFinite(end)||start<0||end<=start||!String(cue.text||"").trim())throw new Error("Caption "+(i+1)+" has invalid timing or empty text. Check its start, end, and wording.");
   if(i&&start<Number(ordered[i-1].end)-.02)throw new Error("Captions "+i+" and "+(i+1)+" overlap. Adjust their timestamps before rendering.");
+  if(Number.isFinite(duration)&&end>duration+.05)throw new Error("Caption "+(i+1)+" ends after the video. Adjust its end time before rendering.");
  }
 }
 async function burnSubtitleExport(){
  const file=state.subtitleSourceFile,cues=state.subtitleCues||[];
  if(!file||!state.subtitleProjectId||!cues.length){toast("Generate subtitles first.");return}
- try{validateSubtitleCuesForRender(cues)}catch(error){toast(error.message);return}
+ try{validateSubtitleCuesForRender(cues,Number(file.duration)||Infinity)}catch(error){toast(error.message);return}
  const button=$("burnSubtitles");button.disabled=true;
  let ffmpeg=null,tempInput="",tempOutput="";
  try{
