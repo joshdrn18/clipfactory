@@ -343,11 +343,28 @@ function renderSubtitleEditor(){
  $("burnSubtitles").onclick=burnSubtitleExport;
  panel.querySelectorAll("[data-cue-start],[data-cue-end],[data-cue-text]").forEach(el=>el.addEventListener("input",()=>{
   const i=Number(el.dataset.cueStart??el.dataset.cueEnd??el.dataset.cueText),cue=state.subtitleCues[i];if(!cue)return;
+  const previous=state.subtitleCues[i-1],next=state.subtitleCues[i+1],minDuration=.05;
   if(el.hasAttribute("data-cue-start")){
-   cue.start=Math.max(0,Number(el.value)||0);
-   if(cue.end<=cue.start){cue.end=cue.start+.2;const endField=panel.querySelector('[data-cue-end="'+i+'"]');if(endField)endField.value=cue.end.toFixed(2)}
+   const requested=Number(el.value);
+   const lower=previous?previous.end:0,upper=next?next.start-minDuration:Math.max(0,Number(state.subtitleDuration)||Infinity);
+   if(!Number.isFinite(requested)||upper<lower||requested<lower||requested>upper){
+    el.value=cue.start.toFixed(2);
+    toast("Start time must stay after the previous caption and before the next one.");
+    return;
+   }
+   cue.start=requested;
+   if(cue.end<cue.start+minDuration){
+    cue.end=cue.start+minDuration;
+    const endField=panel.querySelector('[data-cue-end="'+i+'"]');if(endField)endField.value=cue.end.toFixed(2);
+   }
   }else if(el.hasAttribute("data-cue-end")){
-   cue.end=Math.max(cue.start+.2,Number(el.value)||0);el.value=cue.end.toFixed(2);
+   const requested=Number(el.value),lower=cue.start+minDuration,upper=next?next.start:Math.max(lower,Number(state.subtitleDuration)||Infinity);
+   if(!Number.isFinite(requested)||upper<lower||requested<lower||requested>upper){
+    el.value=cue.end.toFixed(2);
+    toast("End time must stay after this caption and before the next one.");
+    return;
+   }
+   cue.end=requested;el.value=cue.end.toFixed(2);
   }else cue.text=el.value;
   paintPreview();
  }));
