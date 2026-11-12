@@ -332,10 +332,8 @@ async function recordBurnedSubtitleVideo(file,cues,settings,onProgress){
   if(!video.paused&&!video.ended)raf=requestAnimationFrame(paint);
  };
  try{
-  await video.play();
   recorder.start(1000);
-  const frame=()=>{paint();if(!video.paused&&!video.ended)raf=requestAnimationFrame(frame)};
-  frame();
+  paint();
   await new Promise((resolve,reject)=>{video.onended=resolve;video.onerror=()=>reject(new Error("Source playback failed during subtitle rendering."));video.onpause=()=>{if(!video.ended&&recorder.state==="recording")reject(new Error("Video playback paused unexpectedly. Keep the tab active during rendering."))}});
   if(recorder.state==="recording")recorder.stop();
   const blob=await result;
