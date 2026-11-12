@@ -211,7 +211,7 @@ $("createBatch").onclick=async()=>{
   const failedFiles=[];
   for(let fi=0;fi<files.length;fi++){
    activeFileIndex=fi;
-   const file=files[fi],base=file.name.replace(/\\.[^.]+$/,"").replace(/[^a-zA-Z0-9_-]/g,"-").slice(0,45)||"video";
+   const file=files[fi],base=file.name.replace(/\.[^.]+$/,"").replace(/[^a-zA-Z0-9_-]/g,"-").slice(0,45)||"video";
    let input="";
    try{
     setUploadFileStatus(fi,"Starting upload",0,"active");
@@ -243,8 +243,8 @@ $("createBatch").onclick=async()=>{
      engineProgress("Rendering "+output,ffmpegProgressBase);
      const code=await ffmpeg.exec(args);
      if(code!==0){
-      const diagnostics=(ffmpeg.__clipFactoryLogs||[]).slice(-18).join("\\n");
-      throw new Error("FFmpeg exited with code "+code+" while rendering "+file.name+(diagnostics?"\\n\\nFFmpeg log:\\n"+diagnostics:""));
+      const diagnostics=(ffmpeg.__clipFactoryLogs||[]).slice(-18).join("\n");
+      throw new Error("FFmpeg exited with code "+code+" while rendering "+file.name+(diagnostics?"\n\nFFmpeg log:\n"+diagnostics:""));
      }
      const bytes=await ffmpeg.readFile(ffmpegOutput),blob=new Blob([bytes.buffer],{type:"video/mp4"});
      const exported=new File([blob],output,{type:"video/mp4"});
@@ -271,7 +271,25 @@ $("createBatch").onclick=async()=>{
    }
   }
   if(results.length){
-  }catch(e){
+   await api("/projects/"+encodeURIComponent(project.id)+"/complete",{method:"POST",body:"{}"});
+   project.status="completed";
+  }
+  state.files=failedFiles.map(x=>x.file);
+  $("fileInput").value="";
+  renderSelectedFiles();
+  $("recentProjects").innerHTML=state.projects.slice(0,4).map(projectRow).join("");
+  renderProjects();
+  const failedSummary=failedFiles.length?" · "+failedFiles.length+" file(s) failed and remain selected for retry":"";
+  $("engineStatus").textContent=results.length?"Completed · "+results.length+" export(s) saved"+failedSummary:"No exports saved · all "+failedFiles.length+" file(s) failed";
+  $("enginePercent").textContent=results.length?"100%":"0%";
+  $("engineProgressBar").style.width=results.length?"100%":"0%";
+  let resultMarkup=results.length?'<h3>Ready to download</h3>'+results.map(x=>'<div class="engine-result"><span>'+escapeHtml(x.file_name)+' <small>· '+(x.size_bytes/1048576).toFixed(1)+' MB</small></span><button class="admin-action" data-download="'+x.id+'" data-name="'+escapeHtml(x.file_name)+'">Download</button></div>').join(""):"";
+  if(failedFiles.length)resultMarkup+='<div class="notice"><strong>'+failedFiles.length+' file(s) need attention</strong>'+failedFiles.map(x=>'<p>'+escapeHtml(x.file.name)+': '+escapeHtml(x.message)+'</p>').join("")+'Failed files remain selected above. Exports already saved remain in My Videos.</div>';
+  $("engineResults").innerHTML=resultMarkup;
+  if(results.length&&failedFiles.length)toast(results.length+" export(s) saved. "+failedFiles.length+" file(s) failed and remain selected.");
+  else if(results.length)toast("Video processing complete!");
+  else toast("All files failed. Your selection is kept so you can retry.");
+ }catch(e){
   console.error("ClipFactory processing failed:",e);
   const detail = e instanceof Error ? (e.stack || e.message) : (typeof e === "string" ? e : JSON.stringify(e) || String(e));
   const message = e?.message || (typeof e === "string" ? e : "Unknown processing error");
