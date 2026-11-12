@@ -484,7 +484,7 @@ async function burnSubtitleExport(){
   await ffmpeg.writeFile(tempInput,inputBytes);
   const code=await execFFmpegWithTimeout(ffmpeg,["-i",tempInput,"-map","0:v:0","-map","0:a?","-c:v","libx264","-preset","ultrafast","-crf","25","-pix_fmt","yuv420p","-c:a","aac","-b:a","160k","-movflags","+faststart",tempOutput],30*60*1000,8*60*1000);
   if(code!==0)throw new Error("MP4 encoding failed. Check FFmpeg logs and retry.");
-  if(recording.audioTrackCount>0&&!ffmpeg.__clipFactoryLogs.some(line=>/Audio:\\s*aac/i.test(line)))throw new Error("The source audio track was detected, but the MP4 encoder did not report an AAC audio stream. The export was stopped to avoid saving a silent video.");
+  if(recording.audioTrackCount>0&&!ffmpeg.__clipFactoryLogs.some(line=>/Audio:\s*aac/i.test(line)))throw new Error("The source audio track was detected, but the MP4 encoder did not report an AAC audio stream. The export was stopped to avoid saving a silent video.");
   const bytes=await ffmpeg.readFile(tempOutput);
   if(!bytes||bytes.byteLength<1024||String.fromCharCode(...bytes.slice(4,8))!=="ftyp")throw new Error("The MP4 encoder returned an invalid or incomplete file. Retry the render.");
   const exported=new File([bytes],file.name.replace(/\.[^.]+$/,"")+"_subtitled.mp4",{type:"video/mp4"});
