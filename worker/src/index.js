@@ -69,7 +69,7 @@ if(path==="/auth/password"&&method==="POST"){
  if(!account||await passwordHash(currentPassword,account.password_salt)!==account.password_hash)return fail("Current password is incorrect.",401);
  if(currentPassword===newPassword)return fail("Choose a different password.");
  const salt=hex(crypto.getRandomValues(new Uint8Array(16))),hash=await passwordHash(newPassword,salt);
- const token=(req.headers.get("Authorization")||"").replace(/^Bearer\\s+/i,"");
+ const token=(req.headers.get("Authorization")||"").replace(/^Bearer\s+/i,"");
  const tokenHash=await digest(token);
  await env.DB.batch([
   env.DB.prepare("UPDATE users SET password_hash=?,password_salt=? WHERE id=?").bind(hash,salt,user.id),
@@ -330,7 +330,7 @@ if(adminUserDetail&&method==="GET"){
  ]);
  return json({account,wallet:wallet||{balance:0},projects:projects.results||[],videos:videos.results||[],ledger:ledger.results||[],ledger_summary:ledgerSummary||{entries:0,spent:0},activity:activity.results||[],user_activity:userActivity.results||[],sessions:sessions||{total:0,last_created_at:null}});
 }
-const adminPassword=path.match(/^\\/admin\\/users\\/([\\w-]+)\\/password$/);
+const adminPassword=path.match(/^\/admin\/users\/([\w-]+)\/password$/);
 if(adminPassword&&method==="POST"){
  const target=await env.DB.prepare("SELECT id,email FROM users WHERE id=?").bind(adminPassword[1]).first();
  if(!target)return fail("User not found.",404);
