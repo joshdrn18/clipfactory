@@ -411,10 +411,12 @@ async function recordBurnedSubtitleVideo(file,cues,settings,onProgress){
   const ratio=Math.min(1,1920/Math.max(video.videoWidth,video.videoHeight));
   canvas.width=Math.max(2,Math.round(video.videoWidth*ratio/2)*2);
   canvas.height=Math.max(2,Math.round(video.videoHeight*ratio/2)*2);
+  await waitFor(video,"canplay",60000,"The source video could not start decoding. Try another MP4 export.");
   canvasStream=canvas.captureStream(30);
   sourceStream=video.captureStream?video.captureStream():video.mozCaptureStream?.();
   if(!sourceStream)throw new Error("This browser cannot capture the source video. Use the latest Chrome or Edge.");
-  sourceStream.getAudioTracks().forEach(track=>canvasStream.addTrack(track));
+  const sourceAudioTracks=sourceStream.getAudioTracks();
+  sourceAudioTracks.forEach(track=>canvasStream.addTrack(track));
   if(typeof MediaRecorder==="undefined"||typeof MediaRecorder.isTypeSupported!=="function")throw new Error("This browser does not support video recording. Use the latest Chrome or Edge.");
   const mime=["video/webm;codecs=vp9,opus","video/webm;codecs=vp8,opus","video/webm"].find(type=>MediaRecorder.isTypeSupported(type));
   if(!mime)throw new Error("No supported browser recording format was found.");
@@ -422,11 +424,12 @@ async function recordBurnedSubtitleVideo(file,cues,settings,onProgress){
   const chunks=[];
   let rejectRecording;
   const recordingFailure=new Promise((_,reject)=>{rejectRecording=reject});
-  const result=new Promise((resolve,reject)=>{
+  const result=new Promise(resolve=>{
    recorder.ondataavailable=event=>{if(event.data?.size)chunks.push(event.data)};
-   recorder.onerror=()=>{const error=new Error("Browser recording failed while burning subtitles.");reject(error);rejectRecording(error)};
+   recorder.onerror=()=>rejectRecording(new Error("Browser recording failed while burning subtitles."));
    recorder.onstop=()=>resolve(new Blob(chunks,{type:mime}));
   });
+  recordingFailure.catch(()=>{});
   const paint=()=>{
    videoFrame=0;raf=0;
    const now=video.currentTime,cue=cues.find(item=>now>=item.start&&now<item.end);
@@ -437,7 +440,6 @@ async function recordBurnedSubtitleVideo(file,cues,settings,onProgress){
     else raf=requestAnimationFrame(paint);
    }
   };
-  await waitFor(video,"canplay",60000,"The source video could not start decoding. Try another MP4 export.");
   if(video.currentTime!==0){video.currentTime=0;await waitFor(video,"seeked",15000,"Could not seek to the beginning of the source video.");}
   const playbackEnded=new Promise((resolve,reject)=>{
    video.addEventListener("ended",resolve,{once:true});
@@ -474,6 +476,7 @@ async function burnSubtitleExport(){
   const code=await execFFmpegWithTimeout(ffmpeg,["-i",tempInput,"-map","0:v:0","-map","0:a?","-c:v","libx264","-preset","ultrafast","-crf","25","-pix_fmt","yuv420p","-c:a","aac","-b:a","160k","-movflags","+faststart",tempOutput],30*60*1000,8*60*1000);
   if(code!==0)throw new Error("MP4 encoding failed. Check FFmpeg logs and retry.");
   const bytes=await ffmpeg.readFile(tempOutput);
+  if(!bytes||bytes.byteLength<1024||String.fromCharCode(...bytes.slice(4,8))!=="ftyp")throw new Error("The MP4 encoder returned an invalid or incomplete file. Retry the render.");
   const exported=new File([bytes],file.name.replace(/\.[^.]+$/,"")+"_subtitled.mp4",{type:"video/mp4"});
   engineProgress("Saving subtitled MP4…",96,false,"Uploading the rendered video to your ClipFactory storage.");
   const saved=await uploadMedia(exported,state.subtitleProjectId,"export");
