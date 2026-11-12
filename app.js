@@ -521,18 +521,46 @@ function scoreHighlightText(text){
  if(words.length<9)score-=1;
  return score;
 }
+function nearestCueBoundary(cues,target,field,limit){
+ let best=target,distance=limit;
+ for(const cue of cues){
+  const value=Number(cue[field]);
+  if(!Number.isFinite(value))continue;
+  const delta=Math.abs(value-target);
+  if(delta<distance){best=value;distance=delta;}
+ }
+ return best;
+}
+function makeHighlightTitle(cues){
+ const ranked=cues.map(cue=>({text:String(cue.text||"").replace(/\\s+/g," ").trim(),score:scoreHighlightText(cue.text)})).filter(x=>x.text.length>=18).sort((a,b)=>b.score-a.score);
+ let source=ranked[0]?.text||cues.map(x=>x.text).join(" ");
+ source=source.replace(/^(and|but|so|because|then|uh|um)\\s+/i,"").replace(/[.!?]+$/,"").trim();
+ const words=source.split(/\\s+/).filter(Boolean);
+ let title=words.slice(0,9).join(" ");
+ if(title.length>62){title=title.slice(0,59).replace(/\\s+\\S*$/,"")+"…";}
+ if(title.length<12)title="Highlight moment";
+ return title.charAt(0).toUpperCase()+title.slice(1);
+}
 function chooseHighlightWindows(cues,duration,clipSeconds){
  const candidates=[];
  for(const cue of cues){
-  const start=Math.max(0,Math.min(Math.max(0,duration-clipSeconds),cue.start-4));
-  const end=Math.min(duration,start+clipSeconds);
+  const desiredStart=Math.max(0,Math.min(Math.max(0,duration-clipSeconds),cue.start-4));
+  const desiredEnd=Math.min(duration,desiredStart+clipSeconds);
+  let start=nearestCueBoundary(cues,desiredStart,"start",2.75);
+  let end=nearestCueBoundary(cues,desiredEnd,"end",3.5);
+  start=Math.max(0,Math.min(start,duration));
+  end=Math.max(start,Math.min(end,duration));
+  if(end-start>clipSeconds+2)end=nearestCueBoundary(cues,start+clipSeconds,"end",1.25);
+  if(end-start<Math.min(12,clipSeconds*.55)){start=desiredStart;end=desiredEnd;}
   if(end-start<Math.min(12,clipSeconds*.55))continue;
   const inside=cues.filter(x=>x.start<end&&x.end>start);
   const transcript=inside.map(x=>x.text).join(" ").trim();
-  const wordCount=(transcript.match(/\S+/g)||[]).length;
+  const wordCount=(transcript.match(/\\S+/g)||[]).length;
   if(wordCount<10)continue;
   const density=Math.min(clipSeconds,inside.reduce((sum,x)=>sum+Math.max(0,Math.min(end,x.end)-Math.max(start,x.start)),0))/Math.max(1,clipSeconds);
-  const score=inside.reduce((sum,x)=>sum+scoreHighlightText(x.text),0)+density*8+Math.min(wordCount,100)*.08;
+  const cueScores=inside.map(x=>scoreHighlightText(x.text));
+  const peak=Math.max(0,...cueScores),average=cueScores.reduce((a,b)=>a+b,0)/Math.max(1,cueScores.length);
+  const score=peak*1.8+average*1.4+density*8+Math.min(wordCount,100)*.08;
   candidates.push({start,end,score,text:transcript});
  }
  candidates.sort((a,b)=>b.score-a.score);
@@ -543,9 +571,8 @@ function chooseHighlightWindows(cues,duration,clipSeconds){
   selected.push(candidate);
  }
  return selected.sort((a,b)=>a.start-b.start).map((item,index)=>{
-  const words=item.text.split(/\s+/).filter(Boolean);
-  const title=words.slice(0,7).join(" ").replace(/[.!?,;:]+$/,"");
-  return {...item,title:title.length>54?title.slice(0,51).trim()+"…":title||("Highlight "+(index+1))};
+  const inside=cues.filter(x=>x.start<item.end&&x.end>item.start);
+  return {...item,title:makeHighlightTitle(inside)||("Highlight "+(index+1))};
  });
 }
 async function discoverVideoHighlights(ffmpeg,input,duration,clipSeconds,onProgress){
