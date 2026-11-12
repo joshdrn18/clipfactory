@@ -466,7 +466,7 @@ function validateSubtitleCuesForRender(cues,duration=Infinity){
 async function burnSubtitleExport(){
  const file=state.subtitleSourceFile,cues=state.subtitleCues||[];
  if(!file||!state.subtitleProjectId||!cues.length){toast("Generate subtitles first.");return}
- try{validateSubtitleCuesForRender(cues,Number(file.duration)||Infinity)}catch(error){toast(error.message);return}
+ try{validateSubtitleCuesForRender(cues,Number(state.subtitleDuration)||Infinity)}catch(error){toast(error.message);return}
  const button=$("burnSubtitles");button.disabled=true;
  let ffmpeg=null,tempInput="",tempOutput="";
  try{
@@ -653,6 +653,7 @@ async function createSubtitleBatch(files){
  try{
   const file=files[0],duration=await readVideoDuration(file);
   if(!duration||!Number.isFinite(duration))throw new Error("Could not read this video's duration.");
+  state.subtitleDuration=duration;
   engineProgress("Preparing subtitle transcription…",2,true,"Extracting short audio chunks locally. Your full video is not uploaded for transcription.");
   const projectData=await api("/projects",{method:"POST",body:JSON.stringify({name:"Subtitles · "+file.name,kind:"Subtitle transcription",settings:{fileName:file.name,duration}})});
   state.subtitleSourceFile=file;state.subtitleProjectId=projectData.project.id;
