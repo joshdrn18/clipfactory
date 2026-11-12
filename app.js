@@ -179,11 +179,12 @@ $("createBatch").onclick=async()=>{
  const files=[...state.files],workflow=$("workflow").value,aspect=$("aspect").value,clipSeconds=Number($("clipDuration").value);
  if(workflow==="subtitle"){toast("Auto subtitles are coming soon. Choose another workflow.");return}
  $("createBatch").disabled=true;$("engineResults").innerHTML="";
+ let activeFFmpeg=null;const temporaryFFmpegFiles=new Set();
  try{
   engineProgress("Creating project…",1,true);
   const projectData=await api("/projects",{method:"POST",body:JSON.stringify({name:files.length+" video batch",kind:"Video processing",settings:{aspect,workflow,clipSeconds,fileNames:files.map(f=>f.name)}})});
   const project=projectData.project;state.projects.unshift(project);$("statProjects").textContent=state.projects.length;
-  const ffmpeg=await getFFmpeg(),{fetchFile}=await import("https://esm.sh/@ffmpeg/util@0.12.2");
+  const ffmpeg=await getFFmpeg(),{fetchFile}=await import("https://esm.sh/@ffmpeg/util@0.12.2");activeFFmpeg=ffmpeg;
   const results=[];let completed=0,total=files.length;
   for(let fi=0;fi<files.length;fi++){
    const file=files[fi],base=file.name.replace(/\.[^.]+$/,"").replace(/[^a-zA-Z0-9_-]/g,"-").slice(0,45)||"video";
@@ -193,6 +194,7 @@ $("createBatch").onclick=async()=>{
    const input="input-"+fi+"-"+Date.now()+".mp4";
    const inputBytes=await fetchFile(file);
    engineProgress("Loading "+file.name+" into video engine…",16+fi/files.length*10);
+   temporaryFFmpegFiles.add(input);
    await ffmpeg.writeFile(input,inputBytes);
    engineProgress("Reading video duration…",17+fi/files.length*10);
    const duration=await readVideoDuration(file);
@@ -205,6 +207,7 @@ $("createBatch").onclick=async()=>{
     const args=["-ss",String(offset),"-i",input,"-t",String(seconds)];
     if(workflow==="resize"||workflow==="clips")args.push("-vf",videoFilter());
     const ffmpegOutput="./"+output;
+    temporaryFFmpegFiles.add(ffmpegOutput);
     args.push("-c:v","libx264","-preset","ultrafast","-crf",workflow==="compress"?"30":"25","-c:a","aac","-b:a","128k","-movflags","+faststart",ffmpegOutput);
     ffmpegProgressBase=15+(completed/total)*75;ffmpegProgressSpan=75/total;
     engineProgress("Rendering "+output,ffmpegProgressBase);
@@ -214,9 +217,9 @@ $("createBatch").onclick=async()=>{
     const exported=new File([blob],output,{type:"video/mp4"});
     engineProgress("Saving "+output+" to cloud storage…",15+((completed+0.7)/total)*75);
     const saved=await uploadMedia(exported,project.id,"export");
-    results.push(saved.asset);await ffmpeg.deleteFile(ffmpegOutput);completed++;
+    results.push(saved.asset);await ffmpeg.deleteFile(ffmpegOutput);temporaryFFmpegFiles.delete(ffmpegOutput);completed++;
    }
-   await ffmpeg.deleteFile(input);
+   await ffmpeg.deleteFile(input);temporaryFFmpegFiles.delete(input);
   }
   await api("/projects/"+encodeURIComponent(project.id)+"/complete",{method:"POST",body:"{}"});project.status="completed";
   state.files=[];$("fileList").innerHTML="";$("createBatch").disabled=true;
@@ -232,7 +235,10 @@ $("createBatch").onclick=async()=>{
   toast(message);
   $("engineResults").innerHTML='<div class="notice">Processing error: '+escapeHtml(detail)+'</div>';
  }
- finally{$("createBatch").disabled=!state.files.length}
+ finally{
+  if(activeFFmpeg){for(const tempFile of temporaryFFmpegFiles){try{await activeFFmpeg.deleteFile(tempFile)}catch(cleanupError){console.warn("ClipFactory temporary-file cleanup:",tempFile,cleanupError)}}}
+  temporaryFFmpegFiles.clear();$("createBatch").disabled=!state.files.length
+ }
 };
 $("engineResults").onclick=async e=>{
  const b=e.target.closest("[data-download]");if(!b)return;
