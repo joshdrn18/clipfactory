@@ -274,6 +274,7 @@ function renderSubtitleEditor(){
   const width=Math.max(2,Math.round(previewVideo.videoWidth*ratio)),height=Math.max(2,Math.round(previewVideo.videoHeight*ratio));
   if(previewCanvas.width!==width||previewCanvas.height!==height){previewCanvas.width=width;previewCanvas.height=height}
   const now=previewVideo.currentTime,cue=state.subtitleCues.find(item=>now>=item.start&&now<=item.end);
+  previewCtx.clearRect(0,0,width,height);
   drawSubtitleFrame(previewCtx,null,width,height,cue,readSettings());
  };
  previewVideo.addEventListener("loadedmetadata",paintPreview);
@@ -281,14 +282,20 @@ function renderSubtitleEditor(){
  previewVideo.addEventListener("seeked",paintPreview);
  previewVideo.addEventListener("play",paintPreview);
  ["subtitlePosition","subtitleSize","subtitleColor","subtitleBackground"].forEach(id=>$(id).addEventListener("change",paintPreview));
- const previewLoop=()=>{if(!panel.isConnected||panel.hidden)return;if(!previewVideo.paused&&!previewVideo.ended)paintPreview();requestAnimationFrame(previewLoop)};
- requestAnimationFrame(previewLoop);
+ let previewRaf=0;
+ const previewLoop=()=>{paintPreview();if(!previewVideo.paused&&!previewVideo.ended)previewRaf=requestAnimationFrame(previewLoop)};
+ const startPreviewLoop=()=>{cancelAnimationFrame(previewRaf);previewLoop()};
+ const stopPreviewLoop=()=>{cancelAnimationFrame(previewRaf);paintPreview()};
+ previewVideo.addEventListener("play",startPreviewLoop);
+ previewVideo.addEventListener("pause",stopPreviewLoop);
+ previewVideo.addEventListener("ended",stopPreviewLoop);
  $("burnSubtitles").onclick=burnSubtitleExport;
  panel.querySelectorAll("[data-cue-start],[data-cue-end],[data-cue-text]").forEach(el=>el.addEventListener("input",()=>{
   const i=Number(el.dataset.cueStart??el.dataset.cueEnd??el.dataset.cueText),cue=state.subtitleCues[i];if(!cue)return;
   if(el.hasAttribute("data-cue-start"))cue.start=Math.max(0,Number(el.value)||0);
   else if(el.hasAttribute("data-cue-end"))cue.end=Math.max(cue.start,Number(el.value)||0);
   else cue.text=el.value;
+  paintPreview();
  }));
  const download=(content,name,type)=>{const blob=new Blob([content],{type}),url=URL.createObjectURL(blob),link=document.createElement("a");link.href=url;link.download=name;link.click();setTimeout(()=>URL.revokeObjectURL(url),1000)};
  $("downloadVtt").onclick=()=>download(subtitleVtt(),(state.subtitleFileName||"captions").replace(/\.[^.]+$/,"")+".vtt","text/vtt;charset=utf-8");
@@ -327,9 +334,8 @@ function drawSubtitleFrame(ctx,video,width,height,cue,settings){
 }
 async function recordBurnedSubtitleVideo(file,cues,settings,onProgress){
  const video=document.createElement("video"),url=URL.createObjectURL(file),canvas=document.createElement("canvas"),ctx=canvas.getContext("2d",{alpha:false});
- video.src=url;video.muted=false;video.playsInline=true;video.preload="auto";
+ video.src=url;video.muted=true;video.playsInline=true;video.preload="auto";
  const metadataReady=new Promise((resolve,reject)=>{video.onloadedmetadata=resolve;video.onerror=()=>reject(new Error("The source video could not be opened by this browser."));});
- const playReady=video.play();
  await metadataReady;
  const ratio=Math.min(1,1920/Math.max(video.videoWidth,video.videoHeight));
  canvas.width=Math.max(2,Math.round(video.videoWidth*ratio/2)*2);canvas.height=Math.max(2,Math.round(video.videoHeight*ratio/2)*2);
@@ -355,9 +361,12 @@ async function recordBurnedSubtitleVideo(file,cues,settings,onProgress){
  };
  try{
   const playbackEnded=new Promise((resolve,reject)=>{video.onended=resolve;video.onerror=()=>reject(new Error("Source playback failed during subtitle rendering."));video.onpause=()=>{if(!video.ended&&recorder.state==="recording")reject(new Error("Video playback paused unexpectedly. Keep the tab active during rendering."))}});
+  await new Promise(resolve=>{if(video.readyState>=2)return resolve();video.oncanplay=resolve});
+  video.currentTime=0;
+  await new Promise(resolve=>{if(video.currentTime===0)return resolve();video.onseeked=resolve});
   recorder.start(1000);
-  await playReady;
   paint();
+  await video.play();
   await playbackEnded;
   if(recorder.state==="recording")recorder.stop();
   const blob=await result;
