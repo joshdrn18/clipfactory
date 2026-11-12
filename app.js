@@ -215,7 +215,7 @@ async function uploadMedia(file,projectId,kind,forceBackup=false,onProgress){
    await api("/media/upload/"+init.upload_id+"/cancel",{method:"POST",timeoutMs:20000,body:"{}"}).catch(()=>{});
    await refresh().catch(()=>{});
    if(!forceBackup&&init.storage==="primary"){
-    engineProgress("Primary storage unavailable. Retrying on backup storage…",5,true);
+    engineProgress("Primary storage unavailable. Retrying on backup storage…",5,false);
     return uploadMedia(file,projectId,kind,true,onProgress);
    }
    throw error;
@@ -244,7 +244,7 @@ $("createBatch").onclick=async()=>{
    const file=files[fi],base=file.name.replace(/\.[^.]+$/,"").replace(/[^a-zA-Z0-9_-]/g,"-").slice(0,45)||"video";
    let input="",engineUsed=false;
    try{
-    if(!state.ffmpeg){engineProgress("Recovering video engine before the next file…",5,true);ffmpeg=await getFFmpeg();activeFFmpeg=ffmpeg;}
+    if(!state.ffmpeg){engineProgress("Recovering video engine before the next file…",engineProgressValue,false);ffmpeg=await getFFmpeg();activeFFmpeg=ffmpeg;}
     setUploadFileStatus(fi,"Starting upload",0,"active");
     engineProgress("Uploading original "+(fi+1)+"/"+files.length+" · "+file.name,5+fi/files.length*10);
     await uploadMedia(file,project.id,"source",false,(pct,label)=>setUploadFileStatus(fi,label,pct,"active"));
