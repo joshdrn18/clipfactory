@@ -496,7 +496,7 @@ async function recordBurnedSubtitleVideo(file,cues,settings,onProgress){
   canvas.height=Math.max(2,Math.round(video.videoHeight*ratio/2)*2);
   await waitFor(video,"canplay",60000,"The source video could not start decoding. Try another MP4 export.");
   if(typeof canvas.captureStream!=="function")throw new Error("This browser cannot capture the subtitle canvas. Update Chrome or Edge and retry.");
-  const supportsFrameRequests=typeof canvas.captureStream==="function"&&typeof CanvasCaptureMediaStreamTrack!=="undefined";
+  const supportsFrameRequests=typeof CanvasCaptureMediaStreamTrack!=="undefined"&&typeof CanvasCaptureMediaStreamTrack.prototype.requestFrame==="function";
   canvasStream=canvas.captureStream(supportsFrameRequests?0:30);
   const canvasVideoTrack=canvasStream.getVideoTracks()[0];
   const requestCanvasFrame= supportsFrameRequests&&canvasVideoTrack&&typeof canvasVideoTrack.requestFrame==="function"
