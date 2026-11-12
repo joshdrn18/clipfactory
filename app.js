@@ -496,7 +496,12 @@ async function recordBurnedSubtitleVideo(file,cues,settings,onProgress){
   canvas.height=Math.max(2,Math.round(video.videoHeight*ratio/2)*2);
   await waitFor(video,"canplay",60000,"The source video could not start decoding. Try another MP4 export.");
   if(typeof canvas.captureStream!=="function")throw new Error("This browser cannot capture the subtitle canvas. Update Chrome or Edge and retry.");
-  canvasStream=canvas.captureStream(30);
+  const supportsFrameRequests=typeof canvas.captureStream==="function"&&typeof CanvasCaptureMediaStreamTrack!=="undefined";
+  canvasStream=canvas.captureStream(supportsFrameRequests?0:30);
+  const canvasVideoTrack=canvasStream.getVideoTracks()[0];
+  const requestCanvasFrame= supportsFrameRequests&&canvasVideoTrack&&typeof canvasVideoTrack.requestFrame==="function"
+   ?()=>canvasVideoTrack.requestFrame()
+   :null;
   sourceStream=video.captureStream?video.captureStream():video.mozCaptureStream?.();
   if(!sourceStream)throw new Error("This browser cannot capture the source video. Use the latest Chrome or Edge.");
   const sourceAudioTracks=sourceStream.getAudioTracks();
@@ -520,11 +525,13 @@ async function recordBurnedSubtitleVideo(file,cues,settings,onProgress){
    recorder.onstop=()=>resolve(new Blob(chunks,{type:mime}));
   });
   recordingFailure.catch(()=>{});
-  const paint=()=>{
+  const paint=(timestamp,metadata)=>{
    videoFrame=0;raf=0;
-   const now=video.currentTime,cue=cues.find(item=>now>=item.start&&now<item.end);
+   const mediaTime=Number.isFinite(metadata?.mediaTime)?metadata.mediaTime:video.currentTime;
+   const cue=cues.find(item=>mediaTime>=item.start&&mediaTime<item.end);
    drawSubtitleFrame(ctx,video,canvas.width,canvas.height,cue,settings);
-   onProgress?.(Math.min(92,video.duration?now/video.duration*92:0),now,video.duration);
+   requestCanvasFrame?.();
+   onProgress?.(Math.min(92,video.duration?mediaTime/video.duration*92:0),mediaTime,video.duration);
    if(!video.paused&&!video.ended){
     if(video.requestVideoFrameCallback)videoFrame=video.requestVideoFrameCallback(paint);
     else raf=requestAnimationFrame(paint);
