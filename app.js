@@ -311,7 +311,9 @@ function renderSubtitleEditor(){
   const ratio=Math.min(1,1280/Math.max(previewVideo.videoWidth,previewVideo.videoHeight));
   const width=Math.max(2,Math.round(previewVideo.videoWidth*ratio)),height=Math.max(2,Math.round(previewVideo.videoHeight*ratio));
   if(previewCanvas.width!==width||previewCanvas.height!==height){previewCanvas.width=width;previewCanvas.height=height}
-  const now=previewVideo.currentTime,cue=state.subtitleCues.find(item=>now>=item.start&&now<=item.end);
+  const previewStage=previewCanvas.parentElement;
+  if(previewStage)previewStage.style.aspectRatio=width+"/"+height;
+  const now=previewVideo.currentTime,cue=state.subtitleCues.find(item=>now>=item.start&&now<item.end);
   previewCtx.clearRect(0,0,width,height);
   drawSubtitleFrame(previewCtx,null,width,height,cue,readSettings());
  };
