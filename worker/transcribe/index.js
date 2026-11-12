@@ -16,6 +16,7 @@ export default {
   const headers=cors(request,env);
   if(request.method==="OPTIONS")return new Response(null,{status:204,headers});
   const respond=(data,status=200)=>{const response=json(data,status);Object.entries(headers).forEach(([k,v])=>response.headers.set(k,v));return response};
+  if(new URL(request.url).pathname==="/health"&&request.method==="GET")return respond({ok:true,service:"ClipFactory Transcription API",model:"@cf/openai/whisper-large-v3-turbo"});
   if(new URL(request.url).pathname!=="/transcribe"||request.method!=="POST")return respond({error:"Not found."},404);
   try{
    const user=await authenticate(request,env);
