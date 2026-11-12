@@ -5,6 +5,7 @@ compatibility_date = "2026-10-30"
 [vars]
 ADMIN_EMAIL = "admnclip@gmail.com"
 ALLOWED_ORIGIN = "https://clipfactory-aer.pages.dev"
+BACKUP_URL = "https://clipfactory-storage-backup.inipastiuy-41f.workers.dev"
 
 [[d1_databases]]
 binding = "DB"
