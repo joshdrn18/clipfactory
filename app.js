@@ -216,13 +216,27 @@ async function execFFmpegWithTimeout(ffmpeg,args,timeoutMs=30*60*1000,stallTimeo
 }
 async function uploadMedia(file,projectId,kind,forceBackup=false,onProgress){
   const init=await api("/media/upload/init",{method:"POST",timeoutMs:60000,body:JSON.stringify({file_name:file.name,file_size:file.size,content_type:file.type,project_id:projectId,kind,force_backup:forceBackup})});
-  const parts=[],chunkSize=16*1024*1024,totalParts=Math.ceil(file.size/chunkSize);
+  const parts=[],chunkSize=8*1024*1024,totalParts=Math.ceil(file.size/chunkSize);
   try{
    for(let partNumber=1;partNumber<=totalParts;partNumber++){
     const start=(partNumber-1)*chunkSize,end=Math.min(file.size,start+chunkSize);
     const chunk=file.slice(start,end);
     engineProgress("Uploading "+file.name+" · part "+partNumber+"/"+totalParts,Math.min(14,5+(partNumber/totalParts)*9));
-    const part=await api("/media/upload/"+init.upload_id+"/part?partNumber="+partNumber,{method:"PUT",timeoutMs:120000,body:chunk,headers:{"Content-Type":"application/octet-stream"}});
+    let part,lastPartError;
+    for(let attempt=1;attempt<=3;attempt++){
+     try{
+      part=await api("/media/upload/"+init.upload_id+"/part?partNumber="+partNumber,{method:"PUT",timeoutMs:180000,body:chunk,headers:{"Content-Type":"application/octet-stream"}});
+      lastPartError=null;break;
+     }catch(partError){
+      lastPartError=partError;
+      const message=String(partError?.message||partError);
+      const transient=partError instanceof TypeError||/failed to fetch|network|timed out|timeout|internal server error|502|503|504/i.test(message);
+      if(!transient||attempt===3)break;
+      engineProgress("Connection interrupted · retrying upload part "+partNumber+" ("+attempt+"/2)",Math.min(14,5+(partNumber/totalParts)*9),false,"The current chunk is retained in memory. ClipFactory will retry it before switching storage.");
+      await new Promise(resolve=>setTimeout(resolve,900*attempt));
+     }
+    }
+    if(lastPartError)throw new Error("Upload part "+partNumber+"/"+totalParts+" failed after 3 attempts: "+(lastPartError.message||"Network connection interrupted"));
     parts.push({partNumber:part.part_number,etag:part.etag});if(onProgress)onProgress(Math.round(partNumber/totalParts*100),"Uploading chunk "+partNumber+"/"+totalParts);
    }
    let completed;
