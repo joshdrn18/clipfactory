@@ -158,6 +158,19 @@ async function getFFmpeg(){
  });
  state.ffmpeg=ffmpeg;return ffmpeg;
 }
+async function execFFmpegWithTimeout(ffmpeg,args,timeoutMs=30*60*1000){
+ let timer;
+ try{
+  return await Promise.race([
+   ffmpeg.exec(args),
+   new Promise((_,reject)=>{timer=setTimeout(()=>{
+    try{ffmpeg.terminate()}catch(e){}
+    if(state.ffmpeg===ffmpeg)state.ffmpeg=null;
+    reject(new Error("Render timed out after 30 minutes. The video engine was reset; retry this file or use a shorter clip."));
+   },timeoutMs)})
+  ]);
+ }finally{clearTimeout(timer)}
+}
 async function uploadMedia(file,projectId,kind,forceBackup=false,onProgress){
   const init=await api("/media/upload/init",{method:"POST",body:JSON.stringify({file_name:file.name,file_size:file.size,content_type:file.type,project_id:projectId,kind,force_backup:forceBackup})});
   const parts=[],chunkSize=16*1024*1024,totalParts=Math.ceil(file.size/chunkSize);
@@ -243,7 +256,7 @@ $("createBatch").onclick=async()=>{
      args.push("-c:v","libx264","-preset","ultrafast","-crf",workflow==="compress"?"30":"25","-c:a","aac","-b:a","128k","-movflags","+faststart",ffmpegOutput);
      ffmpegProgressBase=15+(completed/total)*75;ffmpegProgressSpan=75/total;
      engineProgress("Rendering "+output,ffmpegProgressBase);
-     const code=await ffmpeg.exec(args);
+     const code=await execFFmpegWithTimeout(ffmpeg,args);
      if(code!==0){
       const diagnostics=(ffmpeg.__clipFactoryLogs||[]).slice(-18).join("\n");
       throw new Error("FFmpeg exited with code "+code+" while rendering "+file.name+(diagnostics?"\n\nFFmpeg log:\n"+diagnostics:""));
