@@ -229,11 +229,103 @@ function videoFilterArgs(aspect){
  }
  return ["-vf","scale="+dims+":force_original_aspect_ratio=increase,crop="+dims,"-map","0:v:0","-map","0:a?"];
 }
+function parseVttTime(value){
+ const parts=String(value||"").trim().replace(",",".").split(":").map(Number);
+ if(parts.some(n=>!Number.isFinite(n)))return 0;
+ return parts.length===3?parts[0]*3600+parts[1]*60+parts[2]:parts.length===2?parts[0]*60+parts[1]:0;
+}
+function parseSubtitleVtt(vtt,offset=0){
+ const cues=[];
+ for(const block of String(vtt||"").replace(/\r/g,"").split(/\n\s*\n/)){
+  const lines=block.split("\n").map(x=>x.trim()).filter(Boolean),ti=lines.findIndex(x=>x.includes("-->"));
+  if(ti<0)continue;
+  const match=lines[ti].match(/(\d{1,2}:\d{2}(?::\d{2})?[.,]\d{3})\s*-->\s*(\d{1,2}:\d{2}(?::\d{2})?[.,]\d{3})/);
+  if(!match)continue;
+  const text=lines.slice(ti+1).join(" ").trim();
+  if(!text)continue;
+  cues.push({start:Math.max(0,parseVttTime(match[1])+offset),end:Math.max(0,parseVttTime(match[2])+offset),text});
+ }
+ return cues;
+}
+function formatVttTime(seconds){
+ const ms=Math.max(0,Math.round(Number(seconds||0)*1000)),h=Math.floor(ms/3600000),m=Math.floor(ms%3600000/60000),s=Math.floor(ms%60000/1000),r=ms%1000;
+ return String(h).padStart(2,"0")+":"+String(m).padStart(2,"0")+":"+String(s).padStart(2,"0")+"."+String(r).padStart(3,"0");
+}
+function subtitleVtt(){
+ return "WEBVTT\n\n"+(state.subtitleCues||[]).map(c=>formatVttTime(c.start)+" --> "+formatVttTime(c.end)+"\n"+String(c.text||"").replace(/[\r\n]+/g," ").trim()).join("\n\n")+"\n";
+}
+function subtitleSrt(){
+ return (state.subtitleCues||[]).map((c,i)=>String(i+1)+"\n"+formatVttTime(c.start).replace(".",",")+" --> "+formatVttTime(c.end).replace(".",",")+"\n"+String(c.text||"").replace(/[\r\n]+/g," ").trim()).join("\n\n")+"\n";
+}
+function renderSubtitleEditor(){
+ const panel=$("subtitleEditor");if(!panel)return;
+ const cues=state.subtitleCues||[];
+ panel.hidden=!cues.length;
+ if(!cues.length)return;
+ panel.innerHTML='<div class="subtitle-editor-head"><div><strong>Subtitle editor</strong><small>'+cues.length+' timed captions · '+escapeHtml(state.subtitleFileName||"Video")+'</small></div><div class="subtitle-downloads"><button class="btn btn-ghost" id="downloadVtt">Download VTT</button><button class="btn btn-ghost" id="downloadSrt">Download SRT</button></div></div><div class="subtitle-cue-list">'+cues.map((c,i)=>'<article class="subtitle-cue" data-cue="'+i+'"><div class="subtitle-cue-times"><label>Start (sec)<input type="number" min="0" step="0.05" data-cue-start="'+i+'" value="'+Number(c.start).toFixed(2)+'"></label><label>End (sec)<input type="number" min="0" step="0.05" data-cue-end="'+i+'" value="'+Number(c.end).toFixed(2)+'"></label></div><label class="subtitle-cue-text">Caption<textarea rows="2" data-cue-text="'+i+'">'+escapeHtml(c.text)+'</textarea></label></article>').join("")+'</div><small class="subtitle-note">Edit the wording or timing, then download the subtitle file. Video burn-in rendering is the next integration step.</small>';
+ panel.querySelectorAll("[data-cue-start],[data-cue-end],[data-cue-text]").forEach(el=>el.addEventListener("input",()=>{
+  const i=Number(el.dataset.cueStart??el.dataset.cueEnd??el.dataset.cueText),cue=state.subtitleCues[i];if(!cue)return;
+  if(el.hasAttribute("data-cue-start"))cue.start=Math.max(0,Number(el.value)||0);
+  else if(el.hasAttribute("data-cue-end"))cue.end=Math.max(cue.start,Number(el.value)||0);
+  else cue.text=el.value;
+ }));
+ const download=(content,name,type)=>{const blob=new Blob([content],{type}),url=URL.createObjectURL(blob),link=document.createElement("a");link.href=url;link.download=name;link.click();setTimeout(()=>URL.revokeObjectURL(url),1000)};
+ $("downloadVtt").onclick=()=>download(subtitleVtt(),(state.subtitleFileName||"captions").replace(/\.[^.]+$/,"")+".vtt","text/vtt;charset=utf-8");
+ $("downloadSrt").onclick=()=>download(subtitleSrt(),(state.subtitleFileName||"captions").replace(/\.[^.]+$/,"")+".srt","application/x-subrip;charset=utf-8");
+}
+async function createSubtitleBatch(files){
+ if(files.length!==1){toast("For subtitle editing, select one video at a time.");return}
+ if(!$("createBatch").disabled)$("createBatch").disabled=true;
+ $("engineResults").innerHTML="";$("subtitleEditor").hidden=true;
+ let ffmpeg=null,input="",audioName="";
+ const temporary=new Set();
+ try{
+  const file=files[0],duration=await readVideoDuration(file);
+  if(!duration||!Number.isFinite(duration))throw new Error("Could not read this video's duration.");
+  engineProgress("Preparing subtitle transcription…",2,true,"Extracting short audio chunks locally. Your full video is not uploaded for transcription.");
+  const projectData=await api("/projects",{method:"POST",body:JSON.stringify({name:"Subtitles · "+file.name,kind:"Subtitle transcription",settings:{fileName:file.name,duration}})});
+  state.projects.unshift(projectData.project);$("statProjects").textContent=state.projects.length;
+  ffmpeg=await getFFmpeg();
+  const {fetchFile}=await import("https://esm.sh/@ffmpeg/util@0.12.2");
+  input="./subtitle-source-"+Date.now()+".mp4";temporary.add(input);
+  let sourceBytes=await fetchFile(file);
+  await ffmpeg.writeFile(input,sourceBytes);sourceBytes=null;
+  const chunkSeconds=45,total=Math.ceil(duration/chunkSeconds),cues=[];
+  for(let index=0;index<total;index++){
+   const offset=index*chunkSeconds,span=Math.min(chunkSeconds,duration-offset);
+   audioName="./subtitle-audio-"+index+".wav";temporary.add(audioName);
+   engineProgress("Extracting audio "+(index+1)+"/"+total+"…",5+index/total*75,false,"Converting to mono 16 kHz WAV before speech recognition.");
+   const code=await execFFmpegWithTimeout(ffmpeg,["-ss",String(offset),"-i",input,"-t",String(span),"-vn","-ac","1","-ar","16000","-c:a","pcm_s16le",audioName],180000,120000);
+   if(code!==0)throw new Error("Could not extract audio from segment "+(index+1)+".");
+   const audioBytes=await ffmpeg.readFile(audioName);
+   if(audioBytes.byteLength>4*1024*1024)throw new Error("Audio segment is too large. Try a shorter source video.");
+   const form=new FormData();form.append("audio",new Blob([audioBytes],{type:"audio/wav"}),"audio.wav");
+   engineProgress("Transcribing audio "+(index+1)+"/"+total+"…",10+(index+1)/total*80,false,"Whisper is detecting speech and generating caption timestamps.");
+   const result=await api("/ai/transcribe",{method:"POST",body:form,timeoutMs:180000});
+   const parsed=parseSubtitleVtt(result.vtt,offset);
+   if(parsed.length)cues.push(...parsed);
+   else if(result.text)cues.push({start:offset,end:Math.min(duration,offset+span),text:result.text});
+   try{await ffmpeg.deleteFile(audioName)}catch(e){}temporary.delete(audioName);
+   if(ffmpeg.__lastProgressAt)ffmpeg.__lastProgressAt=Date.now();
+  }
+  state.subtitleCues=cues.sort((x,y)=>x.start-y.start);
+  state.subtitleFileName=file.name;
+  if(!cues.length)throw new Error("No speech was detected. Check that the video contains audible dialogue.");
+  engineProgress("Subtitles ready",100,false,"Review the transcript and adjust each caption's wording or timing below.");
+  renderSubtitleEditor();toast("Generated "+cues.length+" editable subtitle cues.");
+ }catch(error){
+  engineProgress("Subtitle generation failed",engineProgressValue,false,error.message||"Please retry.");
+  toast(error.message||"Subtitle generation failed.");
+ }finally{
+  if(ffmpeg){for(const name of temporary){try{await ffmpeg.deleteFile(name)}catch(e){}}}
+  $("createBatch").disabled=!state.files.length;
+ }
+}
 $("createBatch").onclick=async()=>{
  if(!state.files.length)return;
  if(!state.user){openAuth();toast("Sign in to process videos.");return}
  const files=[...state.files],workflow=$("workflow").value,aspect=$("aspect").value,clipSeconds=Number($("clipDuration").value);
- if(workflow==="subtitle"){toast("Auto subtitles are coming soon. Choose another workflow.");return}
+ if(workflow==="subtitle"){await createSubtitleBatch(files);return}
  $("createBatch").disabled=true;$("engineResults").innerHTML="";
  let activeFFmpeg=null,activeFileIndex=-1;const temporaryFFmpegFiles=new Set();
  try{
