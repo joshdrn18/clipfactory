@@ -62,6 +62,25 @@ if(path==="/auth/logout"&&method==="POST"){
 }
 if(path==="/me"&&method==="GET"){if(!user)return fail("Please sign in.",401);const wallet=await env.DB.prepare("SELECT balance FROM wallets WHERE user_id=?").bind(user.id).first();const {results:projects}=await env.DB.prepare("SELECT id,name,kind,status,created_at FROM projects WHERE user_id=? ORDER BY created_at DESC LIMIT 100").bind(user.id).all();return json({user,wallet:{...wallet,unlimited:user.role==="admin"},projects})}
 if(!user)return fail("Please sign in.",401);
+if(path==="/ai/transcribe"&&method==="POST"){
+ if(!env.AI)return fail("Speech-to-text is not enabled on this Worker yet.",503);
+ let form;
+ try{form=await req.formData()}catch{return fail("Upload a WAV audio chunk to transcribe.");}
+ const audio=form.get("audio");
+ if(!(audio instanceof File)||audio.size<44||audio.size>4*1024*1024)return fail("Audio chunk must be a WAV file between 44 bytes and 4 MB.");
+ if(audio.type&&audio.type!=="audio/wav"&&audio.type!=="audio/x-wav")return fail("Only WAV audio chunks are accepted.");
+ const language=String(form.get("language")||"").trim().slice(0,12);
+ try{
+  const bytes=new Uint8Array(await audio.arrayBuffer());
+  const options={audio:Array.from(bytes),task:"transcribe",condition_on_previous_text:false};
+  if(/^[a-z]{2,3}(-[A-Z]{2})?$/.test(language))options.language=language;
+  const result=await env.AI.run("@cf/openai/whisper-large-v3-turbo",options);
+  const output=result?.result||result||{};
+  if(!output.text&&!output.vtt)return fail("No speech could be detected in this audio chunk.",422);
+  await logUserActivity(env,user.id,"subtitle_transcribed",{bytes:audio.size,language:output.transcription_info?.language||language||"auto"});
+  return json({text:String(output.text||""),vtt:String(output.vtt||""),segments:Array.isArray(output.segments)?output.segments:[],language:output.transcription_info?.language||null,word_count:Number(output.word_count||0)});
+ }catch(error){console.error("Whisper transcription failed:",error);return fail("Speech transcription failed. Please retry this audio chunk.",502)}
+}
 if(path==="/auth/password"&&method==="POST"){
  const b=await body(req),currentPassword=String(b.current_password||""),newPassword=String(b.new_password||"");
  if(newPassword.length<8||newPassword.length>128)return fail("New password must be between 8 and 128 characters.");
