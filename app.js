@@ -616,9 +616,10 @@ async function burnSubtitleExport(){
   const exported=new File([bytes],file.name.replace(/\.[^.]+$/,"")+"_subtitled.mp4",{type:"video/mp4"});
   engineProgress("Saving subtitled MP4…",96,false,"Uploading the rendered video to your ClipFactory storage.");
   const saved=await uploadMedia(exported,state.subtitleProjectId,"export");
-  await api("/projects/"+encodeURIComponent(state.subtitleProjectId)+"/complete",{method:"POST",body:"{}"}).catch(()=>{});
-  engineProgress("Subtitled video saved",100,false,"Your new MP4 is available in My Videos.");
-  toast("Subtitled MP4 saved to My Videos.");
+  let projectStatusUpdated=true;
+  try{await api("/projects/"+encodeURIComponent(state.subtitleProjectId)+"/complete",{method:"POST",body:"{}"});}catch(statusError){projectStatusUpdated=false;console.warn("ClipFactory subtitle export saved, but project status update failed:",statusError);}
+  engineProgress("Subtitled video saved",100,false,projectStatusUpdated?"Your new MP4 is available in My Videos.":"Your MP4 is saved; the project status could not be updated.");
+  toast(projectStatusUpdated?"Subtitled MP4 saved to My Videos.":"MP4 saved, but project status update failed. Refresh and check My Videos.");
   await refresh().catch(()=>{});
   showView("videos");
  }catch(error){engineProgress("Subtitle render failed",engineProgressValue,false,error.message||"Retry the render.");toast(error.message||"Subtitle render failed.");}
@@ -949,9 +950,12 @@ $("createBatch").onclick=async()=>{
     activeFFmpeg=null;
    }
   }
-  if(results.length){
+  if(results.length&&failedFiles.length===0){
    await api("/projects/"+encodeURIComponent(project.id)+"/complete",{method:"POST",body:"{}"});
    project.status="completed";
+  }else if(results.length&&failedFiles.length){
+   // Preserve the project as incomplete while any source file still needs a retry.
+   project.status="processing";
   }
   state.files=failedFiles.map(x=>x.file);
   $("fileInput").value="";
@@ -959,14 +963,14 @@ $("createBatch").onclick=async()=>{
   $("recentProjects").innerHTML=state.projects.slice(0,4).map(projectRow).join("");
   renderProjects();
   const failedSummary=failedFiles.length?" · "+failedFiles.length+" file(s) failed and remain selected for retry":"";
-  $("engineStatus").textContent=results.length?"Completed · "+results.length+" export(s) saved"+failedSummary:"No exports saved · all "+failedFiles.length+" file(s) failed";
+  $("engineStatus").textContent=results.length?(failedFiles.length?"Partially completed · "+results.length+" export(s) saved"+failedSummary:"Completed · "+results.length+" export(s) saved"):"No exports saved · all "+failedFiles.length+" file(s) failed";
   $("enginePercent").textContent=results.length?"100%":"0%";
   $("engineProgressBar").style.width=results.length?"100%":"0%";
   let resultMarkup=results.length?'<h3>Ready to download</h3>'+results.map(x=>{const meta=x.shortsMeta;return '<div class="engine-result"><span>'+escapeHtml(x.file_name)+' <small>· '+(x.size_bytes/1048576).toFixed(1)+' MB</small></span><button class="admin-action" data-download="'+x.id+'" data-name="'+escapeHtml(x.file_name)+'">Download</button></div>'+(meta?'<div class="notice shorts-metadata"><strong>YouTube Shorts metadata</strong><p><b>Title</b><br>'+escapeHtml(meta.title)+'</p><button class="admin-action" data-copy-value="'+escapeHtml(meta.title)+'">Copy title</button><p><b>Caption</b><br>'+escapeHtml(meta.caption)+'</p><button class="admin-action" data-copy-value="'+escapeHtml(meta.caption)+'">Copy caption</button><p><b>Hashtags</b><br>'+escapeHtml(meta.hashtags)+'</p><button class="admin-action" data-copy-value="'+escapeHtml(meta.hashtags)+'">Copy hashtags</button></div>':'')}).join(""):"";
   if(failedFiles.length)resultMarkup+='<div class="notice"><strong>'+failedFiles.length+' file(s) need attention</strong>'+failedFiles.map(x=>'<p>'+escapeHtml(x.file.name)+': '+escapeHtml(x.message)+'</p>').join("")+'Only failed source files remain selected above. Start the batch again to retry those files; successful source files will not be processed again. Any exports already saved remain in My Videos.</div>';
   $("engineResults").innerHTML=resultMarkup;
   $("engineResults").querySelectorAll("[data-copy-value]").forEach(button=>button.addEventListener("click",async()=>{try{await navigator.clipboard.writeText(button.dataset.copyValue||"");const original=button.textContent;button.textContent="Copied!";setTimeout(()=>button.textContent=original,1200);}catch(error){toast("Clipboard access failed. Select and copy the text manually.");}}));
-  if(results.length&&failedFiles.length)toast(results.length+" export(s) saved. "+failedFiles.length+" file(s) failed and remain selected.");
+  if(results.length&&failedFiles.length)toast(results.length+" export(s) saved. "+failedFiles.length+" file(s) failed; project remains incomplete until retry.");
   else if(results.length)toast("Video processing complete!");
   else toast("All files failed. Your selection is kept so you can retry.");
  }catch(e){
