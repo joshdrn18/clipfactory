@@ -88,10 +88,15 @@ if(uploadComplete&&method==="POST"){
  const id=uid();
  try{
   await multipart.complete(parts);
-  await env.DB.prepare("INSERT INTO media_assets(id,user_id,project_id,kind,file_name,object_key,size_bytes,content_type) VALUES(?,?,?,?,?,?,?,?)").bind(id,user.id,session.project_id,session.kind,session.file_name,session.object_key,session.size_bytes,session.content_type).run();
-  if(session.kind==="export") await env.DB.prepare("INSERT INTO finished_videos(id,user_id,source_project_id,file_name,object_key,size_bytes,content_type) VALUES(?,?,?,?,?,?,?)").bind(id,user.id,session.project_id,session.file_name,session.object_key,session.size_bytes,session.content_type).run();
-  await env.DB.prepare("DELETE FROM media_uploads WHERE id=? AND user_id=?").bind(session.id,user.id).run();
+  const statements=[
+   env.DB.prepare("INSERT INTO media_assets(id,user_id,project_id,kind,file_name,object_key,size_bytes,content_type) VALUES(?,?,?,?,?,?,?,?)").bind(id,user.id,session.project_id,session.kind,session.file_name,session.object_key,session.size_bytes,session.content_type)
+  ];
+  if(session.kind==="export")statements.push(env.DB.prepare("INSERT INTO finished_videos(id,user_id,source_project_id,file_name,object_key,size_bytes,content_type) VALUES(?,?,?,?,?,?,?)").bind(id,user.id,session.project_id,session.file_name,session.object_key,session.size_bytes,session.content_type));
+  statements.push(env.DB.prepare("DELETE FROM media_uploads WHERE id=? AND user_id=?").bind(session.id,user.id));
+  await env.DB.batch(statements);
  }catch(e){
+  await env.DB.prepare("DELETE FROM finished_videos WHERE id=? AND user_id=?").bind(id,user.id).run().catch(()=>{});
+  await env.DB.prepare("DELETE FROM media_assets WHERE id=? AND user_id=?").bind(id,user.id).run().catch(()=>{});
   await env.MEDIA.delete(session.object_key).catch(()=>{});
   if(charged){
    await env.DB.batch([
@@ -101,9 +106,9 @@ if(uploadComplete&&method==="POST"){
   }
   throw e;
  }
- await logUserActivity(env,user.id,session.kind==="export"?"video_exported":"media_uploaded",{file_name:session.file_name,size_bytes:session.size_bytes,kind:session.kind,project_id:session.project_id});
- const wallet=await env.DB.prepare("SELECT balance FROM wallets WHERE user_id=?").bind(user.id).first();
- return json({asset:{id,project_id:session.project_id,kind:session.kind,file_name:session.file_name,size_bytes:session.size_bytes,content_type:session.content_type},points_charged:session.points_charged,balance:wallet?.balance??0,unlimited:user.role==="admin"});
+ await logUserActivity(env,user.id,session.kind==="export"?"video_exported":"media_uploaded",{file_name:session.file_name,size_bytes:session.size_bytes,kind:session.kind,project_id:session.project_id}).catch(()=>{});
+ const wallet=await env.DB.prepare("SELECT balance FROM wallets WHERE user_id=?").bind(user.id).first().catch(()=>null);
+ return json({asset:{id,project_id:session.project_id,kind:session.kind,file_name:session.file_name,size_bytes:session.size_bytes,content_type:session.content_type},points_charged:session.points_charged,balance:wallet?.balance??null,unlimited:user.role==="admin"});
 }
 const uploadCancel=path.match(/^\/media\/upload\/([\w-]+)\/cancel$/);
 if(uploadCancel&&method==="POST"){
