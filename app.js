@@ -900,7 +900,7 @@ $("createBatch").onclick=async()=>{
     const segments=workflow==="clips"?Math.ceil(duration/clipSeconds):workflow==="highlights"?highlightWindows.length:1;
     plannedSegments=segments;
     for(let si=0;si<segments;si++){
-     if(retryEntry.savedSegments[String(si)]){fileExports++;continue;}
+     if(retryEntry.savedSegments[String(si)]){fileExports++;completedTasks++;continue;}
      const highlight=workflow==="highlights"?highlightWindows[si]:null;
      const offset=workflow==="highlights"?highlight.start:workflow==="clips"?si*clipSeconds:0,seconds=workflow==="highlights"?highlight.end-highlight.start:workflow==="clips"?Math.min(clipSeconds,duration-offset):duration;
      if(seconds<=0)continue;
