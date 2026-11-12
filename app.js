@@ -541,6 +541,21 @@ function makeHighlightTitle(cues){
  if(title.length<12)title="Highlight moment";
  return title.charAt(0).toUpperCase()+title.slice(1);
 }
+function buildShortsMetadata(transcript){
+ const clean=String(transcript||"").replace(/<[^>]*>/g," ").replace(/&(?:amp|lt|gt|quot|#39);/g," ").replace(/\s+/g," ").trim();
+ const sentences=(clean.match(/[^.!?]+[.!?]?/g)||[]).map(x=>x.trim()).filter(x=>x.length>=18);
+ const ranked=sentences.map(text=>({text,score:scoreHighlightText(text)})).sort((a,b)=>b.score-a.score);
+ let title=(ranked[0]?.text||clean).replace(/^[,;:—–-]+/,"").trim().replace(/[.!?]+$/,"");
+ if(title.length>88)title=title.slice(0,85).replace(/\s+\S*$/,"")+"…";
+ if(title.length<10)title="Interesting moment from this video";
+ title=title.charAt(0).toUpperCase()+title.slice(1);
+ const caption=(sentences.slice(0,2).join(" ")||clean).slice(0,420).trim();
+ const stop=new Set(["about","after","again","also","because","before","being","could","does","doing","during","from","have","here","into","just","like","more","most","only","other","over","really","said","some","such","than","that","their","them","then","there","these","they","this","those","through","very","what","when","where","which","while","with","would","your","you","the","and","for","are","was","were","has","had","but","not","its","can","will","our","out","get","got"]);
+ const counts=new Map();
+ for(const word of clean.toLowerCase().match(/[a-z][a-z0-9]{3,}/g)||[]){if(stop.has(word))continue;counts.set(word,(counts.get(word)||0)+1);}
+ const tags=[...counts.entries()].sort((a,b)=>b[1]-a[1]).slice(0,4).map(([word])=>"#"+word.replace(/[^a-z0-9]/g,""));
+ return {title,caption,hashtags:[...new Set(["#Shorts",...tags])].join(" ")};
+}
 function measureSilenceRanges(wavBytes,offset,duration){
  const bytes=wavBytes instanceof Uint8Array?wavBytes:new Uint8Array(wavBytes);
  const view=new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength);
@@ -763,7 +778,7 @@ $("createBatch").onclick=async()=>{
      outputBytes=null;
      engineProgress("Saving "+output+" to cloud storage…",ffmpegProgressBase+taskProgressSpan*0.9,false,"Uploading the finished export. It will appear in My Videos when saved.");
      const saved=await uploadMedia(exported,project.id,"export");
-     results.push(saved.asset);
+     results.push({...saved.asset,shortsMeta:highlight?buildShortsMetadata(highlight.text):null});
      fileExports++;
      completedTasks++;
      await ffmpeg.deleteFile(ffmpegOutput);
@@ -811,9 +826,10 @@ $("createBatch").onclick=async()=>{
   $("engineStatus").textContent=results.length?"Completed · "+results.length+" export(s) saved"+failedSummary:"No exports saved · all "+failedFiles.length+" file(s) failed";
   $("enginePercent").textContent=results.length?"100%":"0%";
   $("engineProgressBar").style.width=results.length?"100%":"0%";
-  let resultMarkup=results.length?'<h3>Ready to download</h3>'+results.map(x=>'<div class="engine-result"><span>'+escapeHtml(x.file_name)+' <small>· '+(x.size_bytes/1048576).toFixed(1)+' MB</small></span><button class="admin-action" data-download="'+x.id+'" data-name="'+escapeHtml(x.file_name)+'">Download</button></div>').join(""):"";
+  let resultMarkup=results.length?'<h3>Ready to download</h3>'+results.map(x=>{const meta=x.shortsMeta;return '<div class="engine-result"><span>'+escapeHtml(x.file_name)+' <small>· '+(x.size_bytes/1048576).toFixed(1)+' MB</small></span><button class="admin-action" data-download="'+x.id+'" data-name="'+escapeHtml(x.file_name)+'">Download</button></div>'+(meta?'<div class="notice shorts-metadata"><strong>YouTube Shorts metadata</strong><p><b>Title</b><br>'+escapeHtml(meta.title)+'</p><button class="admin-action" data-copy-value="'+escapeHtml(meta.title)+'">Copy title</button><p><b>Caption</b><br>'+escapeHtml(meta.caption)+'</p><button class="admin-action" data-copy-value="'+escapeHtml(meta.caption)+'">Copy caption</button><p><b>Hashtags</b><br>'+escapeHtml(meta.hashtags)+'</p><button class="admin-action" data-copy-value="'+escapeHtml(meta.hashtags)+'">Copy hashtags</button></div>':'')}).join(""):"";
   if(failedFiles.length)resultMarkup+='<div class="notice"><strong>'+failedFiles.length+' file(s) need attention</strong>'+failedFiles.map(x=>'<p>'+escapeHtml(x.file.name)+': '+escapeHtml(x.message)+'</p>').join("")+'Only failed source files remain selected above. Start the batch again to retry those files; successful source files will not be processed again. Any exports already saved remain in My Videos.</div>';
   $("engineResults").innerHTML=resultMarkup;
+  $("engineResults").querySelectorAll("[data-copy-value]").forEach(button=>button.addEventListener("click",async()=>{try{await navigator.clipboard.writeText(button.dataset.copyValue||"");const original=button.textContent;button.textContent="Copied!";setTimeout(()=>button.textContent=original,1200);}catch(error){toast("Clipboard access failed. Select and copy the text manually.");}}));
   if(results.length&&failedFiles.length)toast(results.length+" export(s) saved. "+failedFiles.length+" file(s) failed and remain selected.");
   else if(results.length)toast("Video processing complete!");
   else toast("All files failed. Your selection is kept so you can retry.");
