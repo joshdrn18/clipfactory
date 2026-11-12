@@ -541,7 +541,40 @@ function makeHighlightTitle(cues){
  if(title.length<12)title="Highlight moment";
  return title.charAt(0).toUpperCase()+title.slice(1);
 }
-function chooseHighlightWindows(cues,duration,clipSeconds){
+function measureSilenceRanges(wavBytes,offset,duration){
+ const bytes=wavBytes instanceof Uint8Array?wavBytes:new Uint8Array(wavBytes);
+ const view=new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength);
+ let dataOffset=12,dataLength=0,sampleRate=16000,channels=1,bits=16;
+ while(dataOffset+8<=bytes.length){
+  const id=String.fromCharCode(...bytes.subarray(dataOffset,dataOffset+4));
+  const size=view.getUint32(dataOffset+4,true);
+  if(id==="fmt "&&dataOffset+24<=bytes.length){channels=view.getUint16(dataOffset+10,true)||1;sampleRate=view.getUint32(dataOffset+12,true)||16000;bits=view.getUint16(dataOffset+22,true)||16;}
+  if(id==="data"){dataOffset+=8;dataLength=Math.min(size,bytes.length-dataOffset);break;}
+  dataOffset+=8+size+(size%2);
+ }
+ if(!dataLength||bits!==16||!sampleRate)return [];
+ const samplesPerWindow=Math.max(1,Math.floor(sampleRate*.5)),bytesPerFrame=channels*2,totalFrames=Math.floor(dataLength/bytesPerFrame),ranges=[];
+ let silenceStart=-1;
+ for(let frame=0;frame<totalFrames;frame+=samplesPerWindow){
+  const end=Math.min(totalFrames,frame+samplesPerWindow);let energy=0,count=0;
+  for(let f=frame;f<end;f++){
+   for(let ch=0;ch<channels;ch++){const sample=view.getInt16(dataOffset+f*bytesPerFrame+ch*2,true)/32768;energy+=sample*sample;count++;}
+  }
+  const rms=Math.sqrt(energy/Math.max(1,count)),quiet=rms<0.006;
+  if(quiet&&silenceStart<0)silenceStart=frame;
+  if(!quiet&&silenceStart>=0){
+   const start=offset+silenceStart/sampleRate,endTime=offset+frame/sampleRate;
+   if(endTime-start>=.7)ranges.push({start,end:endTime});
+   silenceStart=-1;
+  }
+ }
+ if(silenceStart>=0){const start=offset+silenceStart/sampleRate,endTime=offset+totalFrames/sampleRate;if(endTime-start>=.7)ranges.push({start,end:endTime});}
+ return ranges;
+}
+function silenceOverlapSeconds(ranges,start,end){
+ return ranges.reduce((sum,range)=>sum+Math.max(0,Math.min(end,range.end)-Math.max(start,range.start)),0);
+}
+function chooseHighlightWindows(cues,duration,clipSeconds,silenceRanges=[]){
  const candidates=[];
  for(const cue of cues){
   const desiredStart=Math.max(0,Math.min(Math.max(0,duration-clipSeconds),cue.start-4));
@@ -560,7 +593,8 @@ function chooseHighlightWindows(cues,duration,clipSeconds){
   const density=Math.min(clipSeconds,inside.reduce((sum,x)=>sum+Math.max(0,Math.min(end,x.end)-Math.max(start,x.start)),0))/Math.max(1,clipSeconds);
   const cueScores=inside.map(x=>scoreHighlightText(x.text));
   const peak=Math.max(0,...cueScores),average=cueScores.reduce((a,b)=>a+b,0)/Math.max(1,cueScores.length);
-  const score=peak*1.8+average*1.4+density*8+Math.min(wordCount,100)*.08;
+  const silenceRatio=Math.min(1,silenceOverlapSeconds(silenceRanges,start,end)/Math.max(1,end-start));
+  const score=peak*1.8+average*1.4+density*8+Math.min(wordCount,100)*.08-silenceRatio*14;
   candidates.push({start,end,score,text:transcript});
  }
  candidates.sort((a,b)=>b.score-a.score);
@@ -576,7 +610,7 @@ function chooseHighlightWindows(cues,duration,clipSeconds){
  });
 }
 async function discoverVideoHighlights(ffmpeg,input,duration,clipSeconds,onProgress){
- const chunkSeconds=45,total=Math.ceil(duration/chunkSeconds),cues=[],temporary=[];
+ const chunkSeconds=45,total=Math.ceil(duration/chunkSeconds),cues=[],silenceRanges=[],temporary=[];
  try{
   for(let index=0;index<total;index++){
    const offset=index*chunkSeconds,span=Math.min(chunkSeconds,duration-offset),audioName="./highlight-audio-"+Date.now()+"-"+index+".wav";
@@ -586,6 +620,7 @@ async function discoverVideoHighlights(ffmpeg,input,duration,clipSeconds,onProgr
    if(code!==0)throw new Error("Could not extract audio for highlight analysis, segment "+(index+1)+".");
    const bytes=await ffmpeg.readFile(audioName);
    if(bytes.byteLength>4*1024*1024)throw new Error("Audio segment is too large for highlight analysis.");
+   silenceRanges.push(...measureSilenceRanges(bytes,offset,span));
    const form=new FormData();form.append("audio",new Blob([bytes],{type:"audio/wav"}),"audio.wav");
    const result=await transcribeAudio(form,180000);
    const parsed=parseSubtitleVtt(result.vtt,offset);
@@ -597,7 +632,7 @@ async function discoverVideoHighlights(ffmpeg,input,duration,clipSeconds,onProgr
  }finally{for(const name of temporary){try{await ffmpeg.deleteFile(name)}catch(e){}}}
  const normalized=normalizeSubtitleCues(cues,duration);
  if(!normalized.length)throw new Error("No clear speech was detected, so AI Highlight Discovery could not rank moments. Try Create short clips instead.");
- const highlights=chooseHighlightWindows(normalized,duration,clipSeconds);
+ const highlights=chooseHighlightWindows(normalized,duration,clipSeconds,silenceRanges);
  if(!highlights.length)throw new Error("There was not enough speech to find distinct highlight moments. Try a longer clip length or Create short clips.");
  return highlights;
 }
