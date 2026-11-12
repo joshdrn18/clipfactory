@@ -210,17 +210,18 @@ $("createBatch").onclick=async()=>{
   const results=[];let completed=0,total=files.length;
   const failedFiles=[];
   for(let fi=0;fi<files.length;fi++){
-   if(!state.ffmpeg){engineProgress("Recovering video engine before the next file…",5,true);ffmpeg=await getFFmpeg();activeFFmpeg=ffmpeg;}
    activeFileIndex=fi;
    const file=files[fi],base=file.name.replace(/\.[^.]+$/,"").replace(/[^a-zA-Z0-9_-]/g,"-").slice(0,45)||"video";
-   let input="";
+   let input="",engineUsed=false;
    try{
+    if(!state.ffmpeg){engineProgress("Recovering video engine before the next file…",5,true);ffmpeg=await getFFmpeg();activeFFmpeg=ffmpeg;}
     setUploadFileStatus(fi,"Starting upload",0,"active");
     engineProgress("Uploading original "+(fi+1)+"/"+files.length+" · "+file.name,5+fi/files.length*10);
     await uploadMedia(file,project.id,"source",false,(pct,label)=>setUploadFileStatus(fi,label,pct,"active"));
     setUploadFileStatus(fi,"Original uploaded · processing",100,"uploaded");
     engineProgress("Upload complete · preparing "+file.name+" for processing…",15+fi/files.length*10);
     input="input-"+fi+"-"+Date.now()+".mp4";
+    engineUsed=true;
     const inputBytes=await fetchFile(file);
     engineProgress("Loading "+file.name+" into video engine…",16+fi/files.length*10);
     temporaryFFmpegFiles.add(input);
@@ -265,7 +266,7 @@ $("createBatch").onclick=async()=>{
     setUploadFileStatus(fi,"Failed: "+message,0,"failed");
     console.error("ClipFactory file failed:",file.name,fileError);
     // Isolate failures: a broken FFmpeg worker must not poison the next file.
-    if(state.ffmpeg===ffmpeg){try{ffmpeg.terminate()}catch(engineError){console.warn("ClipFactory engine reset:",engineError)}state.ffmpeg=null;}
+    if(engineUsed&&state.ffmpeg===ffmpeg){try{ffmpeg.terminate()}catch(engineError){console.warn("ClipFactory engine reset:",engineError)}state.ffmpeg=null;}
    }finally{
     if(input){
      try{await ffmpeg.deleteFile(input)}catch(cleanupError){console.warn("ClipFactory input cleanup:",input,cleanupError)}
