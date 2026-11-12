@@ -8,6 +8,41 @@ async function passwordHash(password,salt){const key=await crypto.subtle.importK
 function cors(req,env){const origin=req.headers.get("Origin")||"";const allowed=env.ALLOWED_ORIGIN||"";return {"Access-Control-Allow-Origin":allowed==="*"||origin===allowed?origin:allowed,"Access-Control-Allow-Methods":"GET,POST,PUT,DELETE,OPTIONS","Access-Control-Allow-Headers":"Content-Type,Authorization","Vary":"Origin"}}
 function withCors(response,headers){const h=new Headers(response.headers);Object.entries(headers).forEach(([k,v])=>v&&h.set(k,v));return new Response(response.body,{status:response.status,headers:h})}
 async function body(req){try{return await req.json()}catch{return {}}}
+
+const BACKUP_PREFIX="backup/";
+function isBackupKey(key){return String(key||"").startsWith(BACKUP_PREFIX)}
+async function backupRequest(env,path,init={}){
+ if(!env.BACKUP_URL||!env.BACKUP_TOKEN)throw new Error("Backup storage is not configured");
+ const headers=new Headers(init.headers||{});headers.set("Authorization","Bearer "+env.BACKUP_TOKEN);
+ if(init.body&&typeof init.body==="string"&&!headers.has("Content-Type"))headers.set("Content-Type","application/json");
+ const response=await fetch(env.BACKUP_URL.replace(/\/$/,"")+path,{...init,headers});
+ if(!response.ok)throw new Error("Backup storage request failed ("+response.status+")");
+ return response;
+}
+async function mediaCreateMultipart(env,key,options){
+ if(isBackupKey(key)){const r=await backupRequest(env,"/init",{method:"POST",body:JSON.stringify({key,content_type:options?.httpMetadata?.contentType,kind:options?.customMetadata?.kind})});return (await r.json()).upload_id}
+ return env.MEDIA.createMultipartUpload(key,options);
+}
+async function mediaUploadPart(env,key,uploadId,partNumber,data){
+ if(isBackupKey(key)){const r=await backupRequest(env,"/part?key="+encodeURIComponent(key)+"&upload_id="+encodeURIComponent(uploadId)+"&part_number="+partNumber,{method:"PUT",body:data});return await r.json()}
+ return env.MEDIA.resumeMultipartUpload(key,uploadId).uploadPart(partNumber,data);
+}
+async function mediaComplete(env,key,uploadId,parts){
+ if(isBackupKey(key)){const r=await backupRequest(env,"/complete",{method:"POST",body:JSON.stringify({key,upload_id:uploadId,parts})});return await r.json()}
+ return env.MEDIA.resumeMultipartUpload(key,uploadId).complete(parts);
+}
+async function mediaAbort(env,key,uploadId){
+ if(isBackupKey(key)){const r=await backupRequest(env,"/abort",{method:"POST",body:JSON.stringify({key,upload_id:uploadId})});return await r.json()}
+ return env.MEDIA.resumeMultipartUpload(key,uploadId).abort();
+}
+async function mediaGet(env,key){
+ if(isBackupKey(key))return backupRequest(env,"/object?key="+encodeURIComponent(key),{method:"GET"});
+ return env.MEDIA.get(key);
+}
+async function mediaDelete(env,key){
+ if(isBackupKey(key)){const r=await backupRequest(env,"/object?key="+encodeURIComponent(key),{method:"DELETE"});return r.json()}
+ return env.MEDIA.delete(key);
+}
 async function auth(req,env){const token=(req.headers.get("Authorization")||"").replace(/^Bearer\s+/i,"");if(!token)return null;const hash=await digest(token);return await env.DB.prepare("SELECT u.id,u.name,u.email,u.role,u.status FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>? AND u.status='active'").bind(hash,Math.floor(Date.now()/1000)).first()}
 async function createSession(env,userId){const token=hex(crypto.getRandomValues(new Uint8Array(32)));await env.DB.prepare("INSERT INTO sessions(token_hash,user_id,expires_at) VALUES(?,?,?)").bind(await digest(token),userId,Math.floor(Date.now()/1000)+60*60*24*30).run();return token}
 async function logUserActivity(env,userId,action,details={}){try{await env.DB.prepare("INSERT INTO user_activity_logs(id,user_id,action,details) VALUES(?,?,?,?)").bind(uid(),userId,action,JSON.stringify(details)).run()}catch(e){console.warn("User activity log unavailable:",e.message)}}
@@ -32,7 +67,7 @@ if(path==="/points/ledger"&&method==="GET"){const {results:entries}=await env.DB
 if(path==="/points/topups"&&method==="POST"){const b=await body(req),pkg=await env.DB.prepare("SELECT * FROM point_packages WHERE code=? AND active=1").bind(String(b.package_code||"")).first();if(!pkg)return fail("That points package is unavailable.");const id=uid(),reference="CF-"+crypto.randomUUID().slice(0,8).toUpperCase();await env.DB.prepare("INSERT INTO topups(id,user_id,package_code,reference,points,amount_minor,currency,note) VALUES(?,?,?,?,?,?,?,?)").bind(id,user.id,pkg.code,reference,pkg.points,pkg.price_minor,pkg.currency,String(b.note||"").slice(0,500)).run();return json({topup:{id,reference,points:pkg.points,amount_minor:pkg.price_minor,currency:pkg.currency,status:"pending"},message:"Pending request created. Points are not credited until payment is verified."},201)}
 
 if(path==="/media/upload/init"&&method==="POST"){
- if(!env.MEDIA)return fail("Media storage is not configured. Bind the R2 bucket as MEDIA.",503);
+ if(!env.MEDIA&&!env.BACKUP_URL)return fail("Media storage is not configured.",503);
  const b=await body(req),fileName=String(b.file_name||"video.mp4").replace(/[^a-zA-Z0-9._-]/g,"_").slice(-120)||"video.mp4";
  const projectId=String(b.project_id||""),kind=String(b.kind||"source"),size=Number(b.file_size),contentType=String(b.content_type||"");
  if(!Number.isSafeInteger(size)||size<1||size>500*1024*1024)return fail("Each video must be between 1 byte and 500 MB.");
@@ -45,12 +80,17 @@ if(path==="/media/upload/init"&&method==="POST"){
   const wallet=await env.DB.prepare("SELECT balance FROM wallets WHERE user_id=?").bind(user.id).first();
   if((wallet?.balance||0)<pointsCost)return fail("Not enough points. This upload requires "+pointsCost+" points.",402);
  }
- const id=uid(),key=user.id+"/"+projectId+"/"+id+"-"+fileName;
- const multipart=await env.MEDIA.createMultipartUpload(key,{httpMetadata:{contentType},customMetadata:{userId:user.id,projectId,kind}});
+ const id=uid(),baseKey=user.id+"/"+projectId+"/"+id+"-"+fileName;
+ let key=baseKey,multipart;
+ const usage=await env.DB.prepare("SELECT COALESCE(SUM(size_bytes),0) AS bytes FROM media_assets WHERE object_key NOT LIKE 'backup/%'").first().catch(()=>({bytes:0}));
+ const preferBackup=Number(usage?.bytes||0)>=9.5*1024*1024*1024;
+ if(preferBackup&&env.BACKUP_URL&&env.BACKUP_TOKEN)key=BACKUP_PREFIX+baseKey;
+ try{multipart=await mediaCreateMultipart(env,key,{httpMetadata:{contentType},customMetadata:{userId:user.id,projectId,kind}})}
+ catch(primaryError){if(isBackupKey(key)||!env.BACKUP_URL||!env.BACKUP_TOKEN)throw primaryError;key=BACKUP_PREFIX+baseKey;multipart=await mediaCreateMultipart(env,key,{httpMetadata:{contentType},customMetadata:{userId:user.id,projectId,kind}})}
  try{
   await env.DB.prepare("INSERT INTO media_uploads(id,user_id,project_id,kind,file_name,object_key,r2_upload_id,size_bytes,content_type,points_charged) VALUES(?,?,?,?,?,?,?,?,?,?)").bind(id,user.id,projectId,kind,fileName,key,multipart.uploadId,size,contentType,pointsCost).run();
  }catch(e){
-  await multipart.abort().catch(()=>{});
+  await mediaAbort(env,key,multipart.uploadId).catch(()=>{});
   throw e;
  }
  return json({upload_id:id,points_cost:pointsCost,unlimited:user.role==="admin"},201);
@@ -61,7 +101,7 @@ if(uploadPart&&method==="PUT"){
  if(!session)return fail("Upload session not found.",404);
  const partNumber=Number(url.searchParams.get("partNumber"));
  if(!Number.isInteger(partNumber)||partNumber<1||partNumber>10000)return fail("Invalid multipart part number.");
- const part=await env.MEDIA.resumeMultipartUpload(session.object_key,session.r2_upload_id).uploadPart(partNumber,req.body);
+ const part=await mediaUploadPart(env,session.object_key,session.r2_upload_id,partNumber,req.body);
  return json({part_number:part.partNumber,etag:part.etag});
 }
 const uploadComplete=path.match(/^\/media\/upload\/([\w-]+)\/complete$/);
@@ -78,13 +118,13 @@ if(uploadComplete&&method==="POST"){
    env.DB.prepare("INSERT INTO points_ledger(id,user_id,type,amount,balance_after,description) SELECT ?,?,'spend',-?,balance,? FROM wallets WHERE user_id=? AND changes()=1").bind(uid(),user.id,session.points_charged,"Video upload · "+session.file_name,user.id)
   ]);
   if(!charge[0].meta.changes){
-   await env.MEDIA.resumeMultipartUpload(session.object_key,session.r2_upload_id).abort().catch(()=>{});
+   await mediaAbort(env,session.object_key,session.r2_upload_id).catch(()=>{});
    await env.DB.prepare("DELETE FROM media_uploads WHERE id=? AND user_id=?").bind(session.id,user.id).run();
    return fail("Not enough points to complete this upload. You need "+session.points_charged+" points.",402);
   }
   charged=true;
  }
- const multipart=env.MEDIA.resumeMultipartUpload(session.object_key,session.r2_upload_id);
+ const multipart={complete:parts=>mediaComplete(env,session.object_key,session.r2_upload_id,parts)};
  const id=uid();
  try{
   await multipart.complete(parts);
@@ -97,7 +137,7 @@ if(uploadComplete&&method==="POST"){
  }catch(e){
   await env.DB.prepare("DELETE FROM finished_videos WHERE id=? AND user_id=?").bind(id,user.id).run().catch(()=>{});
   await env.DB.prepare("DELETE FROM media_assets WHERE id=? AND user_id=?").bind(id,user.id).run().catch(()=>{});
-  await env.MEDIA.delete(session.object_key).catch(()=>{});
+  await mediaDelete(env,session.object_key).catch(()=>{});
   if(charged){
    await env.DB.batch([
     env.DB.prepare("UPDATE wallets SET balance=balance+?,updated_at=datetime('now') WHERE user_id=?").bind(session.points_charged,user.id),
@@ -130,10 +170,10 @@ if(path==="/videos"&&method==="GET"){
 }
 const videoFile=path.match(/^\/videos\/([\w-]+)\/(file|download)$/);
 if(videoFile&&method==="GET"){
- if(!env.MEDIA)return fail("Media storage is not configured.",503);
+ if(!env.MEDIA&&!env.BACKUP_URL)return fail("Media storage is not configured.",503);
  const video=await env.DB.prepare("SELECT object_key,file_name,content_type FROM finished_videos WHERE id=? AND user_id=?").bind(videoFile[1],user.id).first();
  if(!video)return fail("Finished video not found.",404);
- const object=await env.MEDIA.get(video.object_key);
+ const object=await mediaGet(env,video.object_key);
  if(!object)return fail("Video file is missing from storage.",404);
  const filename=String(video.file_name||"video.mp4").replace(/["\\\\\\r\\n]/g,"_");
  await logUserActivity(env,user.id,videoFile[2]==="download"?"video_downloaded":"video_viewed",{file_name:video.file_name});return new Response(object.body,{headers:{"Content-Type":video.content_type||"video/mp4","Content-Disposition":(videoFile[2]==="file"?"inline":"attachment")+'; filename="'+filename+'"',"Content-Length":String(object.size||0),"Accept-Ranges":"bytes","Cache-Control":"private, no-store"}});
@@ -151,7 +191,7 @@ if(videoRename&&method==="DELETE"){
  const video=await env.DB.prepare("SELECT object_key FROM finished_videos WHERE id=? AND user_id=?").bind(videoRename[1],user.id).first();
  if(!video)return fail("Finished video not found.",404);
  if(!env.MEDIA)return fail("Media storage is not configured.",503);
- await env.MEDIA.delete(video.object_key);
+ await mediaDelete(env,video.object_key);
  await env.DB.prepare("DELETE FROM finished_videos WHERE id=? AND user_id=?").bind(videoRename[1],user.id).run();
  await env.DB.prepare("DELETE FROM media_assets WHERE id=? AND user_id=? AND kind='export'").bind(videoRename[1],user.id).run();
  await logUserActivity(env,user.id,"video_deleted",{video_id:videoRename[1]});
@@ -162,7 +202,7 @@ if(mediaDownload&&method==="GET"){
  if(!env.MEDIA)return fail("Media storage is not configured.",503);
  const asset=await env.DB.prepare("SELECT object_key,file_name,content_type FROM media_assets WHERE id=? AND user_id=?").bind(mediaDownload[1],user.id).first();
  if(!asset)return fail("Media file not found.",404);
- const object=await env.MEDIA.get(asset.object_key);
+ const object=await mediaGet(env,asset.object_key);
  if(!object)return fail("Media file is missing from storage.",404);
  return new Response(object.body,{headers:{"Content-Type":asset.content_type||"application/octet-stream","Content-Disposition":'attachment; filename="'+asset.file_name.replace(/["\\\\]/g,"_")+'"',"Cache-Control":"private, no-store"}});
 }
@@ -173,9 +213,9 @@ if(projectDelete&&method==="DELETE"){
  if(String(project.status||"draft").toLowerCase()!=="draft")return fail("Only draft projects can be deleted.",409);
  const {results:uploads}=await env.DB.prepare("SELECT object_key,r2_upload_id FROM media_uploads WHERE project_id=? AND user_id=?").bind(project.id,user.id).all();
  const {results:assets}=await env.DB.prepare("SELECT object_key,kind FROM media_assets WHERE project_id=? AND user_id=?").bind(project.id,user.id).all();
- if((uploads.length||assets.some(a=>a.kind!=="export"))&&!env.MEDIA)return fail("Media storage is unavailable; project was not deleted.",503);
- for(const upload of uploads){await env.MEDIA.resumeMultipartUpload(upload.object_key,upload.r2_upload_id).abort().catch(()=>{});}
- for(const asset of assets){if(asset.kind!=="export")await env.MEDIA.delete(asset.object_key).catch(()=>{});}
+ if((uploads.length||assets.some(a=>a.kind!=="export"))&&!env.MEDIA&&!env.BACKUP_URL)return fail("Media storage is unavailable; project was not deleted.",503);
+ for(const upload of uploads){await mediaAbort(env,upload.object_key,upload.r2_upload_id).catch(()=>{});}
+ for(const asset of assets){if(asset.kind!=="export")await mediaDelete(env,asset.object_key).catch(()=>{});}
  await env.DB.prepare("DELETE FROM projects WHERE id=? AND user_id=? AND lower(status)='draft'").bind(project.id,user.id).run();
  await logUserActivity(env,user.id,"project_deleted",{project_id:project.id});
  return json({ok:true,deleted:true});
@@ -219,9 +259,9 @@ const adminMediaDelete=path.match(/^\/admin\/media\/([\w-]+)$/);
 if(adminMediaDelete&&method==="DELETE"){
  const asset=await env.DB.prepare("SELECT id,user_id,object_key,file_name,kind,size_bytes FROM media_assets WHERE id=?").bind(adminMediaDelete[1]).first();
  if(!asset)return fail("Media asset not found.",404);
- if(!env.MEDIA)return fail("Media storage is not configured. No database records were changed.",503);
+ if(!env.MEDIA&&!env.BACKUP_URL)return fail("Media storage is not configured. No database records were changed.",503);
  // Delete the R2 object first. Keep D1 metadata intact if R2 deletion fails.
- await env.MEDIA.delete(asset.object_key);
+ await mediaDelete(env,asset.object_key);
  await env.DB.batch([
   env.DB.prepare("DELETE FROM finished_videos WHERE id=?").bind(asset.id),
   env.DB.prepare("DELETE FROM media_assets WHERE id=?").bind(asset.id),
