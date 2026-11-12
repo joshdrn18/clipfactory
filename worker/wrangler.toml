@@ -24,3 +24,6 @@ bucket_name = "clipfactory-media"
 [observability.logs]
 enabled = true
 invocation_logs = true
+
+[ai]
+binding = "AI"
