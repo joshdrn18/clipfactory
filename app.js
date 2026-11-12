@@ -777,12 +777,20 @@ $("createBatch").onclick=async()=>{
      const taskProgressSpan=75/totalTasks;ffmpegProgressBase=15+(completedTasks/totalTasks)*75;ffmpegProgressSpan=taskProgressSpan*0.8;
      ffmpeg.__operationLabel="Rendering "+output;
      engineProgress("Rendering "+output,ffmpegProgressBase,false,"Output "+(si+1)+" of "+segments+" for "+file.name+". This stage uses browser processing and may take time.");
+     // Keep this render's diagnostics separate from earlier inputs/outputs.
+     ffmpeg.__clipFactoryLogs.length=0;
      const code=await execFFmpegWithTimeout(ffmpeg,args);
      if(code!==0){
       const diagnostics=(ffmpeg.__clipFactoryLogs||[]).slice(-18).join("\n");
       throw new Error("FFmpeg exited with code "+code+" while rendering "+file.name+(diagnostics?"\n\nFFmpeg log:\n"+diagnostics:""));
      }
+     const renderLog=(ffmpeg.__clipFactoryLogs||[]).join("\n");
+     const outputLog=renderLog.slice(Math.max(0,renderLog.lastIndexOf("Output #0")));
+     if(!/Video:\s*h264/i.test(outputLog))throw new Error("The export did not contain a confirmed H.264 video stream. It was not uploaded.");
+     const sourceHasAudio=/Input #0[\\s\\S]*?Audio:/i.test(renderLog);
+     if(sourceHasAudio&&!/Audio:\s*aac/i.test(outputLog))throw new Error("The source contains audio, but the export did not contain a confirmed AAC audio stream. It was not uploaded to prevent silent output.");
      let outputBytes=await ffmpeg.readFile(ffmpegOutput);
+     if(!outputBytes||outputBytes.byteLength<1024||String.fromCharCode(...outputBytes.slice(4,8))!=="ftyp")throw new Error("The export is not a valid MP4 file. It was not uploaded.");
      const exported=new File([outputBytes],output,{type:"video/mp4"});
      // File now owns the export data; drop the extra Uint8Array reference before upload.
      outputBytes=null;
