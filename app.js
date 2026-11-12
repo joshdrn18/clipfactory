@@ -287,6 +287,8 @@ $("createBatch").onclick=async()=>{
     failedFiles.push({file,index:fi,message});
     setUploadFileStatus(fi,"Failed: "+message,0,"failed");
     console.error("ClipFactory file failed:",file.name,fileError);
+    // Remove incomplete temporary outputs before resetting the worker. Saved cloud exports are untouched.
+    for(const tempFile of [...temporaryFFmpegFiles]){try{await ffmpeg.deleteFile(tempFile)}catch(cleanupError){console.warn("ClipFactory failed-file cleanup:",tempFile,cleanupError)}temporaryFFmpegFiles.delete(tempFile);}
     // Isolate failures: a broken FFmpeg worker must not poison the next file.
     if(engineUsed&&state.ffmpeg===ffmpeg){try{ffmpeg.terminate()}catch(engineError){console.warn("ClipFactory engine reset:",engineError)}state.ffmpeg=null;}
    }finally{
@@ -310,7 +312,7 @@ $("createBatch").onclick=async()=>{
   $("enginePercent").textContent=results.length?"100%":"0%";
   $("engineProgressBar").style.width=results.length?"100%":"0%";
   let resultMarkup=results.length?'<h3>Ready to download</h3>'+results.map(x=>'<div class="engine-result"><span>'+escapeHtml(x.file_name)+' <small>· '+(x.size_bytes/1048576).toFixed(1)+' MB</small></span><button class="admin-action" data-download="'+x.id+'" data-name="'+escapeHtml(x.file_name)+'">Download</button></div>').join(""):"";
-  if(failedFiles.length)resultMarkup+='<div class="notice"><strong>'+failedFiles.length+' file(s) need attention</strong>'+failedFiles.map(x=>'<p>'+escapeHtml(x.file.name)+': '+escapeHtml(x.message)+'</p>').join("")+'Failed files remain selected above. Exports already saved remain in My Videos.</div>';
+  if(failedFiles.length)resultMarkup+='<div class="notice"><strong>'+failedFiles.length+' file(s) need attention</strong>'+failedFiles.map(x=>'<p>'+escapeHtml(x.file.name)+': '+escapeHtml(x.message)+'</p>').join("")+'Only failed source files remain selected above. Start the batch again to retry those files; successful source files will not be processed again. Any exports already saved remain in My Videos.</div>';
   $("engineResults").innerHTML=resultMarkup;
   if(results.length&&failedFiles.length)toast(results.length+" export(s) saved. "+failedFiles.length+" file(s) failed and remain selected.");
   else if(results.length)toast("Video processing complete!");
