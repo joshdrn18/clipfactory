@@ -160,8 +160,19 @@ async function uploadMedia(file,projectId,kind){
    const part=await api("/media/upload/"+init.upload_id+"/part?partNumber="+partNumber,{method:"PUT",body:chunk,headers:{"Content-Type":"application/octet-stream"}});
    parts.push({partNumber:part.part_number,etag:part.etag});
   }
-  const completed=await api("/media/upload/"+init.upload_id+"/complete",{method:"POST",body:JSON.stringify({parts})});
-  if(kind==="source"&&state.user?.role!=="admin")updatePoints(completed.balance,false);
+  let completed;
+  try{
+   completed=await api("/media/upload/"+init.upload_id+"/complete",{method:"POST",body:JSON.stringify({parts})});
+  }catch(completeError){
+   // The server may have committed the R2 object and D1 rows even if the response was lost.
+   // Check this project's assets before treating an ambiguous network error as a failed upload.
+   const listing=await api("/media?project_id="+encodeURIComponent(projectId));
+   const recovered=(listing.assets||[]).find(asset=>asset.kind===kind&&asset.file_name===file.name&&Number(asset.size_bytes)===file.size);
+   if(!recovered)throw completeError;
+   completed={asset:recovered,balance:null,recovered:true};
+   await refresh().catch(()=>{});
+  }
+  if(kind==="source"&&state.user?.role!=="admin"&&completed.balance!==null&&completed.balance!==undefined)updatePoints(completed.balance,false);
   return completed;
  }catch(error){
   await api("/media/upload/"+init.upload_id+"/cancel",{method:"POST",body:"{}"}).catch(()=>{});
