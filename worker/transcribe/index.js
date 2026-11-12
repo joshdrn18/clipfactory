@@ -2,7 +2,8 @@ const json=(data,status=200)=>new Response(JSON.stringify(data),{status,headers:
 function cors(request,env){
  const origin=request.headers.get("Origin")||"";
  const allowed=env.ALLOWED_ORIGIN||"https://clipfactory-aer.pages.dev";
- return {"Access-Control-Allow-Origin":origin===allowed?origin:allowed,"Access-Control-Allow-Methods":"POST,OPTIONS","Access-Control-Allow-Headers":"Authorization,Content-Type","Access-Control-Max-Age":"86400","Vary":"Origin"};
+ const permitted=origin===allowed||/^https:\/\/[a-z0-9-]+\.clipfactory-aer\.pages\.dev$/.test(origin);
+ return {"Access-Control-Allow-Origin":permitted?origin:allowed,"Access-Control-Allow-Methods":"POST,OPTIONS","Access-Control-Allow-Headers":"Authorization,Content-Type","Access-Control-Max-Age":"86400","Vary":"Origin"};
 }
 async function digest(value){return Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(value))),b=>b.toString(16).padStart(2,"0")).join("")}
 async function authenticate(request,env){
