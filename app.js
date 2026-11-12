@@ -208,43 +208,88 @@ $("createBatch").onclick=async()=>{
   const project=projectData.project;state.projects.unshift(project);$("statProjects").textContent=state.projects.length;
   const ffmpeg=await getFFmpeg(),{fetchFile}=await import("https://esm.sh/@ffmpeg/util@0.12.2");activeFFmpeg=ffmpeg;
   const results=[];let completed=0,total=files.length;
+  const failedFiles=[];
   for(let fi=0;fi<files.length;fi++){
-   activeFileIndex=fi;setUploadFileStatus(fi,"Starting upload",0,"active");
-   const file=files[fi],base=file.name.replace(/\.[^.]+$/,"").replace(/[^a-zA-Z0-9_-]/g,"-").slice(0,45)||"video";
-   engineProgress("Uploading original "+(fi+1)+"/"+files.length+" · "+file.name,5+fi/files.length*10);
-   await uploadMedia(file,project.id,"source",false,(pct,label)=>setUploadFileStatus(fi,label,pct,"active"));
-   setUploadFileStatus(fi,"Original uploaded · processing",100,"uploaded");
-   engineProgress("Upload complete · preparing "+file.name+" for processing…",15+fi/files.length*10);
-   const input="input-"+fi+"-"+Date.now()+".mp4";
-   const inputBytes=await fetchFile(file);
-   engineProgress("Loading "+file.name+" into video engine…",16+fi/files.length*10);
-   temporaryFFmpegFiles.add(input);
-   await ffmpeg.writeFile(input,inputBytes);
-   engineProgress("Reading video duration…",17+fi/files.length*10);
-   const duration=await readVideoDuration(file);
-   if(!duration)throw new Error("Could not read video duration for "+file.name);
-   const segments=workflow==="clips"?Math.ceil(duration/clipSeconds):1;total+=segments-1;
-   for(let si=0;si<segments;si++){
-    const offset=workflow==="clips"?si*clipSeconds:0,seconds=workflow==="clips"?Math.min(clipSeconds,duration-offset):duration;
-    if(seconds<=0)continue;
-    const output=base+(workflow==="clips"?"-clip-"+String(si+1).padStart(2,"0"):"-export")+".mp4";
-    const args=["-ss",String(offset),"-i",input,"-t",String(seconds)];
-    if(workflow==="resize"||workflow==="clips")args.push("-vf",videoFilter());
-    const ffmpegOutput="./"+output;
-    temporaryFFmpegFiles.add(ffmpegOutput);
-    args.push("-c:v","libx264","-preset","ultrafast","-crf",workflow==="compress"?"30":"25","-c:a","aac","-b:a","128k","-movflags","+faststart",ffmpegOutput);
-    ffmpegProgressBase=15+(completed/total)*75;ffmpegProgressSpan=75/total;
-    engineProgress("Rendering "+output,ffmpegProgressBase);
-    const code=await ffmpeg.exec(args);
-    if(code!==0){const diagnostics=(ffmpeg.__clipFactoryLogs||[]).slice(-18).join("\n");throw new Error("FFmpeg exited with code "+code+" while rendering "+file.name+(diagnostics?"\n\nFFmpeg log:\n"+diagnostics:""));}
-    const bytes=await ffmpeg.readFile(ffmpegOutput),blob=new Blob([bytes.buffer],{type:"video/mp4"});
-    const exported=new File([blob],output,{type:"video/mp4"});
-    engineProgress("Saving "+output+" to cloud storage…",15+((completed+0.7)/total)*75);
-    const saved=await uploadMedia(exported,project.id,"export");
-    results.push(saved.asset);await ffmpeg.deleteFile(ffmpegOutput);temporaryFFmpegFiles.delete(ffmpegOutput);completed++;
+   activeFileIndex=fi;
+   const file=files[fi],base=file.name.replace(/\\.[^.]+$/,"").replace(/[^a-zA-Z0-9_-]/g,"-").slice(0,45)||"video";
+   let input="";
+   try{
+    setUploadFileStatus(fi,"Starting upload",0,"active");
+    engineProgress("Uploading original "+(fi+1)+"/"+files.length+" · "+file.name,5+fi/files.length*10);
+    await uploadMedia(file,project.id,"source",false,(pct,label)=>setUploadFileStatus(fi,label,pct,"active"));
+    setUploadFileStatus(fi,"Original uploaded · processing",100,"uploaded");
+    engineProgress("Upload complete · preparing "+file.name+" for processing…",15+fi/files.length*10);
+    input="input-"+fi+"-"+Date.now()+".mp4";
+    const inputBytes=await fetchFile(file);
+    engineProgress("Loading "+file.name+" into video engine…",16+fi/files.length*10);
+    temporaryFFmpegFiles.add(input);
+    await ffmpeg.writeFile(input,inputBytes);
+    engineProgress("Reading video duration…",17+fi/files.length*10);
+    const duration=await readVideoDuration(file);
+    if(!duration)throw new Error("Could not read video duration for "+file.name);
+    const segments=workflow==="clips"?Math.ceil(duration/clipSeconds):1;
+    total+=segments-1;
+    let fileExports=0;
+    for(let si=0;si<segments;si++){
+     const offset=workflow==="clips"?si*clipSeconds:0,seconds=workflow==="clips"?Math.min(clipSeconds,duration-offset):duration;
+     if(seconds<=0)continue;
+     const output=base+(workflow==="clips"?"-clip-"+String(si+1).padStart(2,"0"):"-export")+".mp4";
+     const args=["-ss",String(offset),"-i",input,"-t",String(seconds)];
+     if(workflow==="resize"||workflow==="clips")args.push("-vf",videoFilter());
+     const ffmpegOutput="./"+output;
+     temporaryFFmpegFiles.add(ffmpegOutput);
+     args.push("-c:v","libx264","-preset","ultrafast","-crf",workflow==="compress"?"30":"25","-c:a","aac","-b:a","128k","-movflags","+faststart",ffmpegOutput);
+     ffmpegProgressBase=15+(completed/total)*75;ffmpegProgressSpan=75/total;
+     engineProgress("Rendering "+output,ffmpegProgressBase);
+     const code=await ffmpeg.exec(args);
+     if(code!==0){
+      const diagnostics=(ffmpeg.__clipFactoryLogs||[]).slice(-18).join("\\n");
+      throw new Error("FFmpeg exited with code "+code+" while rendering "+file.name+(diagnostics?"\\n\\nFFmpeg log:\\n"+diagnostics:""));
+     }
+     const bytes=await ffmpeg.readFile(ffmpegOutput),blob=new Blob([bytes.buffer],{type:"video/mp4"});
+     const exported=new File([blob],output,{type:"video/mp4"});
+     engineProgress("Saving "+output+" to cloud storage…",15+((completed+0.7)/total)*75);
+     const saved=await uploadMedia(exported,project.id,"export");
+     results.push(saved.asset);
+     fileExports++;
+     await ffmpeg.deleteFile(ffmpegOutput);
+     temporaryFFmpegFiles.delete(ffmpegOutput);
+     completed++;
+    }
+    if(!fileExports)throw new Error("No export was produced for "+file.name);
+    setUploadFileStatus(fi,"Completed · "+fileExports+" export(s) saved",100,"success");
+   }catch(fileError){
+    const message=fileError?.message||"Unknown file processing error";
+    failedFiles.push({file,index:fi,message});
+    setUploadFileStatus(fi,"Failed: "+message,0,"failed");
+    console.error("ClipFactory file failed:",file.name,fileError);
+   }finally{
+    if(input){
+     try{await ffmpeg.deleteFile(input)}catch(cleanupError){console.warn("ClipFactory input cleanup:",input,cleanupError)}
+     temporaryFFmpegFiles.delete(input);
+    }
    }
-   await ffmpeg.deleteFile(input);temporaryFFmpegFiles.delete(input);
   }
+  if(results.length){
+   await api("/projects/"+encodeURIComponent(project.id)+"/complete",{method:"POST",body:"{}"});
+   project.status="completed";
+  }
+  state.files=failedFiles.map(x=>x.file);
+  $("fileInput").value="";
+  renderSelectedFiles();
+  $("recentProjects").innerHTML=state.projects.slice(0,4).map(projectRow).join("");
+  renderProjects();
+  const failedSummary=failedFiles.length?" · "+failedFiles.length+" file(s) failed and remain selected for retry":"";
+  $("engineStatus").textContent=results.length
+   ?"Completed · "+results.length+" export(s) saved"+failedSummary
+   :"No exports saved · all "+failedFiles.length+" file(s) failed";
+  $("enginePercent").textContent=results.length?"100%":"0%";
+  $("engineProgressBar").style.width=results.length?"100%":"0%";
+  $("engineResults").innerHTML=(results.length?'<h3>Ready to download</h3>'+results.map(x=>'<div class="engine-result"><span>'+escapeHtml(x.file_name)+' <small>· '+(x.size_bytes/1048576).toFixed(1)+' MB</small></span><button class="admin-action" data-download="'+x.id+'" data-name="'+escapeHtml(x.file_name)+'">Download</button></div>':'')+
+   (failedFiles.length?'<div class="notice"><strong>'+failedFiles.length+' file(s) need attention</strong>'+failedFiles.map(x=>'<p>'+escapeHtml(x.file.name)+': '+escapeHtml(x.message)+'</p>').join("")+'Failed files are still selected above. Remove them or retry the batch; exports already saved remain in My Videos.</div>':'');
+  if(results.length&&failedFiles.length)toast(results.length+" export(s) saved. "+failedFiles.length+" file(s) failed and remain selected.");
+  else if(results.length)toast("Video processing complete!");
+  else toast("All files failed. Your selection is kept so you can retry.");
   await api("/projects/"+encodeURIComponent(project.id)+"/complete",{method:"POST",body:"{}"});project.status="completed";
   state.files=[];$("fileInput").value="";renderSelectedFiles();$("createBatch").disabled=true;
   $("recentProjects").innerHTML=state.projects.slice(0,4).map(projectRow).join("");renderProjects();
