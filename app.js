@@ -338,9 +338,12 @@ function renderSubtitleEditor(){
  $("burnSubtitles").onclick=burnSubtitleExport;
  panel.querySelectorAll("[data-cue-start],[data-cue-end],[data-cue-text]").forEach(el=>el.addEventListener("input",()=>{
   const i=Number(el.dataset.cueStart??el.dataset.cueEnd??el.dataset.cueText),cue=state.subtitleCues[i];if(!cue)return;
-  if(el.hasAttribute("data-cue-start"))cue.start=Math.max(0,Number(el.value)||0);
-  else if(el.hasAttribute("data-cue-end"))cue.end=Math.max(cue.start,Number(el.value)||0);
-  else cue.text=el.value;
+  if(el.hasAttribute("data-cue-start")){
+   cue.start=Math.max(0,Number(el.value)||0);
+   if(cue.end<=cue.start){cue.end=cue.start+.2;const endField=panel.querySelector('[data-cue-end="'+i+'"]');if(endField)endField.value=cue.end.toFixed(2)}
+  }else if(el.hasAttribute("data-cue-end")){
+   cue.end=Math.max(cue.start+.2,Number(el.value)||0);el.value=cue.end.toFixed(2);
+  }else cue.text=el.value;
   paintPreview();
  }));
  const download=(content,name,type)=>{const blob=new Blob([content],{type}),url=URL.createObjectURL(blob),link=document.createElement("a");link.href=url;link.download=name;link.click();setTimeout(()=>URL.revokeObjectURL(url),1000)};
@@ -459,9 +462,18 @@ async function recordBurnedSubtitleVideo(file,cues,settings,onProgress){
   throw error;
  }finally{stopTracks()}
 }
+function validateSubtitleCuesForRender(cues){
+ const ordered=[...(cues||[])].sort((a,b)=>Number(a.start)-Number(b.start));
+ for(let i=0;i<ordered.length;i++){
+  const cue=ordered[i],start=Number(cue.start),end=Number(cue.end);
+  if(!Number.isFinite(start)||!Number.isFinite(end)||start<0||end<=start||!String(cue.text||"").trim())throw new Error("Caption "+(i+1)+" has invalid timing or empty text. Check its start, end, and wording.");
+  if(i&&start<Number(ordered[i-1].end)-.02)throw new Error("Captions "+i+" and "+(i+1)+" overlap. Adjust their timestamps before rendering.");
+ }
+}
 async function burnSubtitleExport(){
  const file=state.subtitleSourceFile,cues=state.subtitleCues||[];
  if(!file||!state.subtitleProjectId||!cues.length){toast("Generate subtitles first.");return}
+ try{validateSubtitleCuesForRender(cues)}catch(error){toast(error.message);return}
  const button=$("burnSubtitles");button.disabled=true;
  let ffmpeg=null,tempInput="",tempOutput="";
  try{
