@@ -1,5 +1,10 @@
 const API_DEFAULT = "https://clipfactory-api.joshdrn18.workers.dev";
 const state = { token: localStorage.getItem("cf_token") || "", user: null, points: 0, projects: [], files: [], packages: [], authMode: "login", adminTab:"overview", ffmpeg:null,subtitleCues:[],subtitleSourceFile:null,subtitleProjectId:null,subtitlePreviewUrl:null,retryBatch:null };
+function retryCheckpointKey(user=state.user){const identity=user?.id||user?.email;return identity?"cf_retry_batch_v1:"+String(identity).toLowerCase():""}
+function persistRetryBatch(){const key=retryCheckpointKey();if(!key||!state.retryBatch)return;try{localStorage.setItem(key,JSON.stringify({version:1,project:state.retryBatch.project,settings:state.retryBatch.settings,files:state.retryBatch.files,savedAt:new Date().toISOString()}))}catch(error){console.warn("ClipFactory retry checkpoint could not be saved:",error);toast("Retry checkpoint could not be saved in this browser. Keep this tab open until exports finish.")}}
+function restoreRetryBatch(user){const key=retryCheckpointKey(user);if(!key){state.retryBatch=null;return}try{const raw=localStorage.getItem(key);if(!raw){state.retryBatch=null;return}const saved=JSON.parse(raw);if(saved?.version!==1||!saved.project?.id||!saved.settings||!saved.files||typeof saved.files!=="object")throw new Error("Invalid checkpoint");state.retryBatch={project:saved.project,settings:saved.settings,files:saved.files};}catch(error){localStorage.removeItem(key);state.retryBatch=null;console.warn("ClipFactory retry checkpoint was discarded:",error)}}
+function clearRetryBatch(){const key=retryCheckpointKey();if(key)localStorage.removeItem(key);state.retryBatch=null}
+
 const $ = (id) => document.getElementById(id);
 const apiBase = () => localStorage.getItem("cf_api_url") || API_DEFAULT;
 async function api(path, options={}) {
@@ -25,7 +30,7 @@ document.addEventListener("click",e=>{const b=e.target.closest("[data-view]");if
 $("menuBtn").onclick=()=>$("sidebar").classList.toggle("open");
 function setUser(user){state.user=user;$("adminNav").hidden=user?.role!=="admin";$("profileName").textContent=user?.name||"Guest creator";$("profileEmail").textContent=user?.email||"Sign in to sync";$("avatar").textContent=(user?.name||"G").slice(0,1).toUpperCase();$("topAvatar").textContent=$("avatar").textContent;$("authButton").textContent=user?"Account":"Sign in";$("settingsAccount").textContent=user?user.name+" · "+user.email:"You are browsing as a guest. Sign in to sync your workspace.";$("logoutButton").hidden=!user}
 function updatePoints(n,unlimited=false){state.points=Number(n||0);const display=unlimited?"∞":fmt(state.points);$("sidePoints").innerHTML=display+' <small>pts</small>';$("statPoints").textContent=display;$("walletPoints").innerHTML=display+' <small>'+(unlimited?"unlimited":"pts")+'</small>';$("walletUnlimited")?.toggleAttribute("hidden",!unlimited);$("packageGrid")?.setAttribute("hidden","")}
-async function refresh(){if(!state.token){setUser(null);updatePoints(0);$("statProjects").textContent="0";$("statExports").textContent="0";$("statQueue").textContent="—";return}try{const d=await api("/me");setUser(d.user);updatePoints(d.wallet?.balance,d.wallet?.unlimited||d.user?.role==="admin");state.projects=d.projects||[];$("statProjects").textContent=state.projects.length;renderProjects();$("recentProjects").innerHTML=state.projects.slice(0,4).map(projectRow).join("")||"No projects yet — create your first batch.";try{const videos=await api("/videos");$("statExports").textContent=fmt(videos.count??videos.videos?.length??0)}catch(e){$("statExports").textContent="—"}$("statQueue").textContent="—";}catch(e){if(e.message==="Please sign in."){state.token="";localStorage.removeItem("cf_token");setUser(null)}$("statExports").textContent="—";toast(e.message||"Could not refresh workspace.")}}
+async function refresh(){if(!state.token){setUser(null);updatePoints(0);$("statProjects").textContent="0";$("statExports").textContent="0";$("statQueue").textContent="—";return}try{const d=await api("/me");setUser(d.user);restoreRetryBatch(d.user);updatePoints(d.wallet?.balance,d.wallet?.unlimited||d.user?.role==="admin");state.projects=d.projects||[];$("statProjects").textContent=state.projects.length;renderProjects();$("recentProjects").innerHTML=state.projects.slice(0,4).map(projectRow).join("")||"No projects yet — create your first batch.";try{const videos=await api("/videos");$("statExports").textContent=fmt(videos.count??videos.videos?.length??0)}catch(e){$("statExports").textContent="—"}$("statQueue").textContent="—";}catch(e){if(e.message==="Please sign in."){state.token="";localStorage.removeItem("cf_token");setUser(null)}$("statExports").textContent="—";toast(e.message||"Could not refresh workspace.")}}
 function projectRow(p){const draft=String(p.status||"draft").toLowerCase()==="draft";const status=String(p.status||"Draft");const updated=p.updated_at||p.created_at;return '<div class="project-row"><span class="project-name-cell"><strong>'+escapeHtml(p.name||"Untitled project")+'</strong><small>'+escapeHtml(p.kind||"Video")+' · Created '+(p.created_at?new Date(p.created_at).toLocaleString(): "—")+'</small></span><span>'+escapeHtml(p.kind||"Video")+'</span><span><i class="status-pill">'+escapeHtml(status)+'</i></span><span>'+(updated?new Date(updated).toLocaleString(): "—")+(draft?' <button class="admin-action danger" data-delete-project="'+escapeHtml(p.id)+'" title="Delete draft project">Delete</button>':'')+'</span></div>'}
 document.addEventListener("click",async e=>{const b=e.target.closest("[data-delete-project]");if(!b)return;const id=b.dataset.deleteProject;const project=state.projects.find(p=>p.id===id);if(!project)return;if(String(project.status||"draft").toLowerCase()!=="draft"){toast("Only draft projects can be deleted.");return}if(!confirm('Delete draft project "'+project.name+'"? Its uploaded source files will be deleted, but finished videos stay in My Videos. Points already used will not be refunded.'))return;b.disabled=true;try{await api("/projects/"+encodeURIComponent(id),{method:"DELETE"});state.projects=state.projects.filter(p=>p.id!==id);$("statProjects").textContent=state.projects.length;$("recentProjects").innerHTML=state.projects.slice(0,4).map(projectRow).join("")||"No projects yet — create your first batch.";renderProjects();toast("Draft project deleted.");}catch(err){b.disabled=false;toast(err.message||"Could not delete project.");}});
 $("projectSearch")?.addEventListener("input",renderProjects);$("projectStatusFilter")?.addEventListener("change",renderProjects);$("projectSort")?.addEventListener("change",renderProjects);$("clearProjectFilters")?.addEventListener("click",()=>{$("projectSearch").value="";$("projectStatusFilter").value="all";$("projectSort").value="newest";renderProjects()});
@@ -95,7 +100,7 @@ $("topAvatar").onclick=()=>state.user?showView("settings"):openAuth();
 $("authToggle").onclick=(e)=>{e.preventDefault();state.authMode=state.authMode==="login"?"register":"login";$("authTitle").textContent=state.authMode==="login"?"Your creative workspace":"Create your account";$("authName").style.display=state.authMode==="register"?"block":"none";$("authName").required=state.authMode==="register";$("authToggle").textContent=state.authMode==="login"?"Need an account? Create one":"Already have an account? Sign in"};
 function openAuth(){state.authMode="login";$("authName").style.display="none";$("authName").required=false;$("authTitle").textContent="Your creative workspace";$("authToggle").textContent="Need an account? Create one";$("authDialog").showModal()}
 $("authForm").onsubmit=async e=>{e.preventDefault();const body={email:$("authEmail").value,password:$("authPassword").value,name:$("authName").value};try{const d=await api("/auth/"+state.authMode,{method:"POST",body:JSON.stringify(body)});state.token=d.token;localStorage.setItem("cf_token",d.token);$("authDialog").close();await refresh();toast("Welcome to ClipFactory!")}catch(err){toast(err.message)}};
-$("logoutButton").onclick=async()=>{try{await api("/auth/logout",{method:"POST",body:"{}"})}catch(e){console.warn("Server logout could not be confirmed:",e.message)}state.token="";localStorage.removeItem("cf_token");state.projects=[];setUser(null);updatePoints(0);$("statProjects").textContent="0";$("statExports").textContent="0";$("statQueue").textContent="—";renderProjects();$("recentProjects").textContent="Sign in to see your recent projects.";toast("Signed out")};
+$("logoutButton").onclick=async()=>{try{await api("/auth/logout",{method:"POST",body:"{}"})}catch(e){console.warn("Server logout could not be confirmed:",e.message)}state.token="";localStorage.removeItem("cf_token");state.projects=[];state.retryBatch=null;setUser(null);updatePoints(0);$("statProjects").textContent="0";$("statExports").textContent="0";$("statQueue").textContent="—";renderProjects();$("recentProjects").textContent="Sign in to see your recent projects.";toast("Signed out")};
 const templates=[["Podcast punch","Turn a long conversation into a sharp, captioned highlight.","PODCAST","Podcast"],["Product spotlight","Show the value in the first three seconds.","PRODUCT","Product"],["Storytime hook","Open a story loop that makes viewers stay.","STORY","Story"],["Before / after","A visual transformation with a clear payoff.","TRANSFORM","Before / After"],["Quick tutorial","A clean step-by-step educational short.","HOW TO","Tutorial"],["Faceless facts","Pair concise facts with bold on-screen text.","FACTS","Faceless"]];
 $("templateGrid").innerHTML=templates.map((t,i)=>'<article class="template-card"><div class="template-art">'+t[2]+'</div><div class="template-copy"><strong>'+t[0]+'</strong><p>'+t[1]+'</p><button class="text-button" data-template="'+i+'">Use template ↗</button></div></article>').join("");
 $("templateGrid").onclick=e=>{const b=e.target.closest("[data-template]");if(!b)return;showView("bulk");$("workflow").value="clips";toast(templates[Number(b.dataset.template)][0]+" selected — upload footage to continue.")};
@@ -851,6 +856,7 @@ $("createBatch").onclick=async()=>{
    project=projectData.project;
    state.retryBatch={project,settings:batchSettings,files:{}};
    files.forEach(file=>{state.retryBatch.files[fileKey(file)]={sourceUploaded:false,savedSegments:{}};});
+    persistRetryBatch();
    state.projects.unshift(project);$("statProjects").textContent=state.projects.length;
   }
   let ffmpeg=await getFFmpeg();const {fetchFile}=await import("https://esm.sh/@ffmpeg/util@0.12.2");activeFFmpeg=ffmpeg;
@@ -880,6 +886,7 @@ $("createBatch").onclick=async()=>{
      engineProgress("Uploading original "+(fi+1)+"/"+files.length+" · "+file.name,5+fi/files.length*10);
      await uploadMedia(file,project.id,"source",false,(pct,label)=>setUploadFileStatus(fi,label,pct,"active"));
      retryEntry.sourceUploaded=true;
+      persistRetryBatch();
     }
     setUploadFileStatus(fi,"Original uploaded · processing",100,"uploaded");
     engineProgress("Upload complete · preparing "+file.name+" for processing…",15+fi/files.length*10);
@@ -938,6 +945,7 @@ $("createBatch").onclick=async()=>{
      const saved=await uploadMedia(exported,project.id,"export");
      const savedResult={...saved.asset,shortsMeta:highlight?buildShortsMetadata(highlight.text):null};
      retryEntry.savedSegments[String(si)]=savedResult;
+      persistRetryBatch();
      results.push(savedResult);
      fileExports++;
      completedTasks++;
@@ -976,7 +984,7 @@ $("createBatch").onclick=async()=>{
   if(results.length&&failedFiles.length===0){
    await api("/projects/"+encodeURIComponent(project.id)+"/complete",{method:"POST",body:"{}"});
    project.status="completed";
-   state.retryBatch=null;
+   clearRetryBatch();
   }else if(results.length&&failedFiles.length){
    // Keep the same project and per-segment checkpoints so retry skips exports already saved.
    project.status="processing";
