@@ -1,5 +1,5 @@
 const API_DEFAULT = "https://clipfactory-api.joshdrn18.workers.dev";
-const state = { token: localStorage.getItem("cf_token") || "", user: null, points: 0, projects: [], files: [], packages: [], authMode: "login", adminTab:"overview", ffmpeg:null,subtitleCues:[],subtitleSourceFile:null,subtitleProjectId:null,subtitlePreviewUrl:null };
+const state = { token: localStorage.getItem("cf_token") || "", user: null, points: 0, projects: [], files: [], packages: [], authMode: "login", adminTab:"overview", ffmpeg:null,subtitleCues:[],subtitleSourceFile:null,subtitleProjectId:null,subtitlePreviewUrl:null,retryBatch:null };
 const $ = (id) => document.getElementById(id);
 const apiBase = () => localStorage.getItem("cf_api_url") || API_DEFAULT;
 async function api(path, options={}) {
@@ -837,11 +837,24 @@ $("createBatch").onclick=async()=>{
  $("createBatch").disabled=true;$("engineResults").innerHTML="";
  let activeFFmpeg=null,activeFileIndex=-1;const temporaryFFmpegFiles=new Set();
  try{
-  engineProgress("Creating project…",1,true);
-  const projectData=await api("/projects",{method:"POST",body:JSON.stringify({name:files.length+" video batch",kind:"Video processing",settings:{aspect,workflow,clipSeconds,fileNames:files.map(f=>f.name)}})});
-  const project=projectData.project;state.projects.unshift(project);$("statProjects").textContent=state.projects.length;
+  const batchSettings={aspect,workflow,clipSeconds};
+  const fileKey=file=>[file.name,file.size,file.lastModified].join("|");
+  const retryFilesMatch=state.retryBatch&&JSON.stringify(state.retryBatch.settings)===JSON.stringify(batchSettings)&&files.every(file=>state.retryBatch.files[fileKey(file)]);
+  let project;
+  if(retryFilesMatch){
+   project=state.retryBatch.project;
+   engineProgress("Resuming incomplete batch…",1,true,"Previously saved clips will be reused; only missing outputs will be rendered.");
+  }else{
+   state.retryBatch=null;
+   engineProgress("Creating project…",1,true);
+   const projectData=await api("/projects",{method:"POST",body:JSON.stringify({name:files.length+" video batch",kind:"Video processing",settings:{aspect,workflow,clipSeconds,fileNames:files.map(f=>f.name)}})});
+   project=projectData.project;
+   state.retryBatch={project,settings:batchSettings,files:{}};
+   files.forEach(file=>{state.retryBatch.files[fileKey(file)]={sourceUploaded:false,savedSegments:{}};});
+   state.projects.unshift(project);$("statProjects").textContent=state.projects.length;
+  }
   let ffmpeg=await getFFmpeg();const {fetchFile}=await import("https://esm.sh/@ffmpeg/util@0.12.2");activeFFmpeg=ffmpeg;
-  const results=[];
+  const results=Object.values(state.retryBatch.files).flatMap(entry=>Object.values(entry.savedSegments||{}));
   const failedFiles=[];
   // Read every source duration up front so the batch progress denominator is stable.
   const durations=[],metadataErrors=[];
@@ -860,9 +873,14 @@ $("createBatch").onclick=async()=>{
     if(!state.ffmpeg){engineProgress("Recovering video engine before the next file…",engineProgressValue,false);ffmpeg=await getFFmpeg();activeFFmpeg=ffmpeg;}
     const duration=durations[fi];
     if(!duration)throw new Error(metadataErrors[fi]||("Could not read video duration for "+file.name));
-    setUploadFileStatus(fi,"Starting upload",0,"active");
-    engineProgress("Uploading original "+(fi+1)+"/"+files.length+" · "+file.name,5+fi/files.length*10);
-    await uploadMedia(file,project.id,"source",false,(pct,label)=>setUploadFileStatus(fi,label,pct,"active"));
+    const retryEntry=state.retryBatch.files[fileKey(file)];
+    if(!retryEntry)throw new Error("Retry checkpoint is missing for "+file.name+". Start a fresh batch.");
+    if(!retryEntry.sourceUploaded){
+     setUploadFileStatus(fi,"Starting upload",0,"active");
+     engineProgress("Uploading original "+(fi+1)+"/"+files.length+" · "+file.name,5+fi/files.length*10);
+     await uploadMedia(file,project.id,"source",false,(pct,label)=>setUploadFileStatus(fi,label,pct,"active"));
+     retryEntry.sourceUploaded=true;
+    }
     setUploadFileStatus(fi,"Original uploaded · processing",100,"uploaded");
     engineProgress("Upload complete · preparing "+file.name+" for processing…",15+fi/files.length*10);
     input="input-"+fi+"-"+Date.now()+".mp4";
@@ -882,6 +900,7 @@ $("createBatch").onclick=async()=>{
     const segments=workflow==="clips"?Math.ceil(duration/clipSeconds):workflow==="highlights"?highlightWindows.length:1;
     plannedSegments=segments;
     for(let si=0;si<segments;si++){
+     if(retryEntry.savedSegments[String(si)]){fileExports++;continue;}
      const highlight=workflow==="highlights"?highlightWindows[si]:null;
      const offset=workflow==="highlights"?highlight.start:workflow==="clips"?si*clipSeconds:0,seconds=workflow==="highlights"?highlight.end-highlight.start:workflow==="clips"?Math.min(clipSeconds,duration-offset):duration;
      if(seconds<=0)continue;
@@ -917,7 +936,9 @@ $("createBatch").onclick=async()=>{
      outputBytes=null;
      engineProgress("Saving "+output+" to cloud storage…",ffmpegProgressBase+taskProgressSpan*0.9,false,"Uploading the finished export. It will appear in My Videos when saved.");
      const saved=await uploadMedia(exported,project.id,"export");
-     results.push({...saved.asset,shortsMeta:highlight?buildShortsMetadata(highlight.text):null});
+     const savedResult={...saved.asset,shortsMeta:highlight?buildShortsMetadata(highlight.text):null};
+     retryEntry.savedSegments[String(si)]=savedResult;
+     results.push(savedResult);
      fileExports++;
      completedTasks++;
      await ffmpeg.deleteFile(ffmpegOutput);
@@ -955,8 +976,9 @@ $("createBatch").onclick=async()=>{
   if(results.length&&failedFiles.length===0){
    await api("/projects/"+encodeURIComponent(project.id)+"/complete",{method:"POST",body:"{}"});
    project.status="completed";
+   state.retryBatch=null;
   }else if(results.length&&failedFiles.length){
-   // Preserve the project as incomplete while any source file still needs a retry.
+   // Keep the same project and per-segment checkpoints so retry skips exports already saved.
    project.status="processing";
   }
   state.files=failedFiles.map(x=>x.file);
