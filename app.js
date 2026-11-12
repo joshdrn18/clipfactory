@@ -277,11 +277,18 @@ function normalizeSubtitleCues(input,duration=Infinity){
   if(current.end>next.start){
    const clipped=next.start-current.start;
    if(clipped>=.2)current.end=next.start;
-   else if((current.text+" "+next.text).length<=76){
-    current.text=(current.text+" "+next.text).trim();
-    current.end=Math.max(current.end,next.end);
-    output.splice(i+1,1);i--;
-   }else current.end=Math.max(current.start+.2,next.start);
+   else {
+    // Very close segment boundaries can otherwise leave overlapping captions.
+    // Move the next cue forward by a fraction of a second rather than extending
+    // the current cue over it; this preserves a clean, non-overlapping timeline.
+    const adjustedStart=current.start+.2;
+    if(next.end>adjustedStart){
+     next.start=adjustedStart;
+     current.end=adjustedStart;
+    }else{
+     current.end=Math.max(current.start+.05,next.start);
+    }
+   }
   }
  }
  return output.filter(cue=>cue.end>cue.start&&cue.start<duration);
@@ -393,12 +400,16 @@ async function recordBurnedSubtitleVideo(file,cues,settings,onProgress){
   recorder.onerror=()=>reject(new Error("Browser recording failed while burning subtitles."));
   recorder.onstop=()=>resolve(new Blob(chunks,{type:mime}));
  });
- let raf=0;
+ let raf=0,videoFrame=0;
+ const schedulePaint=()=>{
+  if(video.requestVideoFrameCallback)videoFrame=video.requestVideoFrameCallback(()=>paint());
+  else raf=requestAnimationFrame(paint);
+ };
  const paint=()=>{
   const now=video.currentTime,cue=cues.find(c=>now>=c.start&&now<=c.end);
   drawSubtitleFrame(ctx,video,canvas.width,canvas.height,cue,settings);
   onProgress?.(Math.min(92,video.duration?now/video.duration*92:0),now,video.duration);
-  if(!video.paused&&!video.ended)raf=requestAnimationFrame(paint);
+  if(!video.paused&&!video.ended)schedulePaint();
  };
  try{
   const playbackEnded=new Promise((resolve,reject)=>{video.onended=resolve;video.onerror=()=>reject(new Error("Source playback failed during subtitle rendering."));video.onpause=()=>{if(!video.ended&&recorder.state==="recording")reject(new Error("Video playback paused unexpectedly. Keep the tab active during rendering."))}});
@@ -416,7 +427,7 @@ async function recordBurnedSubtitleVideo(file,cues,settings,onProgress){
   if(!blob.size)throw new Error("Subtitle render produced an empty video.");
   return blob;
  }catch(error){if(recorder.state==="recording")recorder.stop();throw error}
- finally{cancelAnimationFrame(raf);video.pause();stopTracks()}
+ finally{cancelAnimationFrame(raf);if(videoFrame&&video.cancelVideoFrameCallback)video.cancelVideoFrameCallback(videoFrame);video.pause();stopTracks()}
 }
 async function burnSubtitleExport(){
  const file=state.subtitleSourceFile,cues=state.subtitleCues||[];
