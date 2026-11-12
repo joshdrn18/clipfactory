@@ -448,7 +448,7 @@ async function recordBurnedSubtitleVideo(file,cues,settings,onProgress){
   if(recorder.state==="recording")recorder.stop();
   const blob=await result;
   if(!blob.size)throw new Error("Subtitle render produced an empty recording.");
-  return blob;
+  return {blob,audioTrackCount:sourceAudioTracks.length};
  }catch(error){
   if(recorder&&recorder.state==="recording"){try{recorder.stop()}catch(e){}}
   throw error;
@@ -472,14 +472,19 @@ async function burnSubtitleExport(){
  try{
   const settings={position:$("subtitlePosition").value,size:$("subtitleSize").value,color:$("subtitleColor").value,background:$("subtitleBackground").value};
   engineProgress("Rendering subtitles into video…",0,true,"Keep this tab active. The browser will play the video once while drawing captions.");
-  const blob=await recordBurnedSubtitleVideo(file,cues,settings,(pct,now,total)=>engineProgress("Burning subtitles · "+Math.floor(now)+"s / "+Math.floor(total)+"s",pct,false,"Captions are being drawn into every video frame."));
-  engineProgress("Encoding MP4…",93,false,"Converting the browser recording into a compatible MP4.");
+  const recording=await recordBurnedSubtitleVideo(file,cues,settings,(pct,now,total)=>engineProgress("Burning subtitles · "+Math.floor(now)+"s / "+Math.floor(total)+"s",pct,false,"Captions are being drawn into every video frame."));
+  const blob=recording.blob;
+  if(!blob||blob.size<1024)throw new Error("Subtitle render produced an empty recording.");
+  const webmHeader=new Uint8Array(await blob.slice(0,4).arrayBuffer());
+  if(webmHeader[0]!==0x1a||webmHeader[1]!==0x45||webmHeader[2]!==0xdf||webmHeader[3]!==0xa3)throw new Error("Browser recording is not a valid WebM video. Retry in the latest Chrome or Edge.");
+  engineProgress("Encoding MP4…",93,false,recording.audioTrackCount?"Video and "+recording.audioTrackCount+" audio track(s) will be encoded into MP4.":"No audio track was detected in the source recording; the exported MP4 will be silent.");
   ffmpeg=await getFFmpeg();
   const inputBytes=new Uint8Array(await blob.arrayBuffer());
   tempInput="./subtitle-burn-"+Date.now()+".webm";tempOutput="./"+file.name.replace(/\.[^.]+$/,"")+"_subtitled.mp4";
   await ffmpeg.writeFile(tempInput,inputBytes);
   const code=await execFFmpegWithTimeout(ffmpeg,["-i",tempInput,"-map","0:v:0","-map","0:a?","-c:v","libx264","-preset","ultrafast","-crf","25","-pix_fmt","yuv420p","-c:a","aac","-b:a","160k","-movflags","+faststart",tempOutput],30*60*1000,8*60*1000);
   if(code!==0)throw new Error("MP4 encoding failed. Check FFmpeg logs and retry.");
+  if(recording.audioTrackCount>0&&!ffmpeg.__clipFactoryLogs.some(line=>/Audio:\\s*aac/i.test(line)))throw new Error("The source audio track was detected, but the MP4 encoder did not report an AAC audio stream. The export was stopped to avoid saving a silent video.");
   const bytes=await ffmpeg.readFile(tempOutput);
   if(!bytes||bytes.byteLength<1024||String.fromCharCode(...bytes.slice(4,8))!=="ftyp")throw new Error("The MP4 encoder returned an invalid or incomplete file. Retry the render.");
   const exported=new File([bytes],file.name.replace(/\.[^.]+$/,"")+"_subtitled.mp4",{type:"video/mp4"});
