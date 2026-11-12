@@ -503,6 +503,77 @@ async function burnSubtitleExport(){
   button.disabled=false;
  }
 }
+function scoreHighlightText(text){
+ const value=String(text||"").toLowerCase(),words=value.match(/[a-z0-9']+/g)||[];
+ if(words.length<5)return 0;
+ let score=Math.min(words.length,28)*0.35;
+ const patterns=[
+  [/\b(why|how|what if|here's why|the reason)\b/g,2.5],
+  [/\b(secret|mistake|truth|shocking|surprising|never|always|actually|finally)\b/g,2],
+  [/\b(but|however|until|instead|because|so|therefore)\b/g,1.2],
+  [/\b(number one|first|second|top|best|worst|biggest|fastest)\b/g,1.5],
+  [/\b(imagine|remember|listen|watch|look|wait)\b/g,1.5],
+  [/\b(amazing|incredible|crazy|insane|important|powerful|beautiful|terrible)\b/g,1.1]
+ ];
+ for(const [pattern,weight] of patterns)score+=(value.match(pattern)||[]).length*weight;
+ if(/[?!]/.test(text))score+=1.5;
+ if(/\d/.test(text))score+=1;
+ if(words.length<9)score-=1;
+ return score;
+}
+function chooseHighlightWindows(cues,duration,clipSeconds){
+ const candidates=[];
+ for(const cue of cues){
+  const start=Math.max(0,Math.min(Math.max(0,duration-clipSeconds),cue.start-4));
+  const end=Math.min(duration,start+clipSeconds);
+  if(end-start<Math.min(12,clipSeconds*.55))continue;
+  const inside=cues.filter(x=>x.start<end&&x.end>start);
+  const transcript=inside.map(x=>x.text).join(" ").trim();
+  const wordCount=(transcript.match(/\S+/g)||[]).length;
+  if(wordCount<10)continue;
+  const density=Math.min(clipSeconds,inside.reduce((sum,x)=>sum+Math.max(0,Math.min(end,x.end)-Math.max(start,x.start)),0))/Math.max(1,clipSeconds);
+  const score=inside.reduce((sum,x)=>sum+scoreHighlightText(x.text),0)+density*8+Math.min(wordCount,100)*.08;
+  candidates.push({start,end,score,text:transcript});
+ }
+ candidates.sort((a,b)=>b.score-a.score);
+ const selected=[];
+ for(const candidate of candidates){
+  if(selected.length>=5)break;
+  if(selected.some(x=>Math.abs(x.start-candidate.start)<clipSeconds*.72))continue;
+  selected.push(candidate);
+ }
+ return selected.sort((a,b)=>a.start-b.start).map((item,index)=>{
+  const words=item.text.split(/\s+/).filter(Boolean);
+  const title=words.slice(0,7).join(" ").replace(/[.!?,;:]+$/,"");
+  return {...item,title:title.length>54?title.slice(0,51).trim()+"…":title||("Highlight "+(index+1))};
+ });
+}
+async function discoverVideoHighlights(ffmpeg,input,duration,clipSeconds,onProgress){
+ const chunkSeconds=45,total=Math.ceil(duration/chunkSeconds),cues=[],temporary=[];
+ try{
+  for(let index=0;index<total;index++){
+   const offset=index*chunkSeconds,span=Math.min(chunkSeconds,duration-offset),audioName="./highlight-audio-"+Date.now()+"-"+index+".wav";
+   temporary.push(audioName);
+   onProgress("Listening for highlight moments "+(index+1)+"/"+total+"…", "Transcribing audio locally in short chunks; only extracted audio is sent for speech recognition.");
+   const code=await execFFmpegWithTimeout(ffmpeg,["-ss",String(offset),"-i",input,"-t",String(span),"-vn","-ac","1","-ar","16000","-c:a","pcm_s16le",audioName],180000,120000);
+   if(code!==0)throw new Error("Could not extract audio for highlight analysis, segment "+(index+1)+".");
+   const bytes=await ffmpeg.readFile(audioName);
+   if(bytes.byteLength>4*1024*1024)throw new Error("Audio segment is too large for highlight analysis.");
+   const form=new FormData();form.append("audio",new Blob([bytes],{type:"audio/wav"}),"audio.wav");
+   const result=await transcribeAudio(form,180000);
+   const parsed=parseSubtitleVtt(result.vtt,offset);
+   if(parsed.length)cues.push(...parsed);
+   else if(result.text)cues.push({start:offset,end:Math.min(duration,offset+span),text:result.text});
+   try{await ffmpeg.deleteFile(audioName)}catch(e){}
+   temporary.splice(temporary.indexOf(audioName),1);
+  }
+ }finally{for(const name of temporary){try{await ffmpeg.deleteFile(name)}catch(e){}}}
+ const normalized=normalizeSubtitleCues(cues,duration);
+ if(!normalized.length)throw new Error("No clear speech was detected, so AI Highlight Discovery could not rank moments. Try Create short clips instead.");
+ const highlights=chooseHighlightWindows(normalized,duration,clipSeconds);
+ if(!highlights.length)throw new Error("There was not enough speech to find distinct highlight moments. Try a longer clip length or Create short clips.");
+ return highlights;
+}
 async function createSubtitleBatch(files){
  if(files.length!==1){toast("For subtitle editing, select one video at a time.");return}
  if(!$("createBatch").disabled)$("createBatch").disabled=true;
@@ -573,7 +644,7 @@ $("createBatch").onclick=async()=>{
    try{durations[mi]=await readVideoDuration(files[mi]);metadataErrors[mi]="";}
    catch(metadataError){durations[mi]=0;metadataErrors[mi]=metadataError?.message||"Could not read video metadata.";}
   }
-  const totalTasks=Math.max(1,durations.reduce((sum,d)=>sum+(d>0?(workflow==="clips"?Math.ceil(d/clipSeconds):1):0),0));
+  const totalTasks=Math.max(1,durations.reduce((sum,d)=>sum+(d>0?(workflow==="clips"?Math.ceil(d/clipSeconds):workflow==="highlights"?Math.min(5,Math.max(1,Math.ceil(d/clipSeconds))):1):0),0));
   let completedTasks=0;
   for(let fi=0;fi<files.length;fi++){
    activeFileIndex=fi;
@@ -596,14 +667,22 @@ $("createBatch").onclick=async()=>{
     await ffmpeg.writeFile(input,inputBytes);
     // Release the duplicate JavaScript buffer once FFmpeg owns the source file.
     inputBytes=null;
-    const segments=workflow==="clips"?Math.ceil(duration/clipSeconds):1;
+    let highlightWindows=[];
+    if(workflow==="highlights"){
+     engineProgress("Finding the strongest moments…",18,false,"AI is transcribing the source and ranking distinct moments from the spoken content.");
+     highlightWindows=await discoverVideoHighlights(ffmpeg,input,duration,clipSeconds,(label,hint)=>engineProgress(label,Math.max(engineProgressValue,20),false,hint));
+     engineProgress("Found "+highlightWindows.length+" candidate highlights",Math.max(engineProgressValue,28),false,"Rendering the highest-scoring moments in chronological order.");
+    }
+    const segments=workflow==="clips"?Math.ceil(duration/clipSeconds):workflow==="highlights"?highlightWindows.length:1;
     plannedSegments=segments;
     for(let si=0;si<segments;si++){
-     const offset=workflow==="clips"?si*clipSeconds:0,seconds=workflow==="clips"?Math.min(clipSeconds,duration-offset):duration;
+     const highlight=workflow==="highlights"?highlightWindows[si]:null;
+     const offset=workflow==="highlights"?highlight.start:workflow==="clips"?si*clipSeconds:0,seconds=workflow==="highlights"?highlight.end-highlight.start:workflow==="clips"?Math.min(clipSeconds,duration-offset):duration;
      if(seconds<=0)continue;
-     const output=base+(workflow==="clips"?"-clip-"+String(si+1).padStart(2,"0"):"-export")+".mp4";
+     const safeTitle=highlight?highlight.title.toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"").slice(0,28):"";
+     const output=base+(workflow==="highlights"?"-highlight-"+String(si+1).padStart(2,"0")+(safeTitle?"-"+safeTitle:""):workflow==="clips"?"-clip-"+String(si+1).padStart(2,"0"):"-export")+".mp4";
      const args=["-ss",String(offset),"-i",input,"-t",String(seconds)];
-     if(workflow==="resize"||workflow==="clips")args.push(...videoFilterArgs(aspect));
+     if(workflow==="resize"||workflow==="clips"||workflow==="highlights")args.push(...videoFilterArgs(aspect));
      else args.push("-map","0:v:0","-map","0:a?");
      const ffmpegOutput="./"+output;
      temporaryFFmpegFiles.add(ffmpegOutput);
