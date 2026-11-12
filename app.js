@@ -286,10 +286,11 @@ function normalizeSubtitleCues(input,duration=Infinity){
   const start=Math.max(0,Number(cue.start)||0);
   let end=Math.min(duration,Math.max(start,Number(cue.end)||start));
   if(!cue.text||!Number.isFinite(start)||!Number.isFinite(end)||end<=start)continue;
-  const previous=clean[clean.length-1];
-  if(previous&&start<previous.end){
+  while(clean.length&&start<clean[clean.length-1].end){
+   const previous=clean[clean.length-1];
    previous.end=start;
    if(previous.end-previous.start<.08)clean.pop();
+   else break;
   }
   if(end-start>=.08)clean.push({start,end,text:cue.text});
  }
