@@ -3,12 +3,20 @@ const state = { token: localStorage.getItem("cf_token") || "", user: null, point
 const $ = (id) => document.getElementById(id);
 const apiBase = () => localStorage.getItem("cf_api_url") || API_DEFAULT;
 async function api(path, options={}) {
-  const isForm = options.body instanceof FormData; const headers = { ...(isForm?{}:{"Content-Type":"application/json"}), ...(options.headers||{}) };
+  const {timeoutMs,...requestOptions}=options;
+  const isForm = requestOptions.body instanceof FormData; const headers = { ...(isForm?{}:{"Content-Type":"application/json"}), ...(requestOptions.headers||{}) };
   if (state.token) headers.Authorization = "Bearer " + state.token;
-  const response = await fetch(apiBase() + "/api" + path, { ...options, headers });
-  const data = await response.json().catch(()=>({error:"Invalid server response"}));
-  if (!response.ok) throw new Error(data.error || "Request failed");
-  return data;
+  const controller=timeoutMs?new AbortController():null;
+  const timer=controller?setTimeout(()=>controller.abort(),timeoutMs):null;
+  try{
+   const response = await fetch(apiBase() + "/api" + path, { ...requestOptions, headers, ...(controller?{signal:controller.signal}:{}) });
+   const data = await response.json().catch(()=>({error:"Invalid server response"}));
+   if (!response.ok) throw new Error(data.error || "Request failed");
+   return data;
+  }catch(error){
+   if(controller?.signal.aborted)throw new Error("Request timed out while "+path+". Check your connection and retry.");
+   throw error;
+  }finally{if(timer)clearTimeout(timer)}
 }
 function toast(message){const el=$("toast");el.textContent=message;el.classList.add("show");setTimeout(()=>el.classList.remove("show"),2800)}
 function fmt(n){return Number(n||0).toLocaleString()}
@@ -145,11 +153,12 @@ function engineProgress(label,pct,reset=false){if(reset)engineProgressValue=0;en
 async function getFFmpeg(){
  if(state.ffmpeg)return state.ffmpeg;
  engineProgress("Loading video engine (first run may take a moment)…",2);
- const {FFmpeg}=await import("https://esm.sh/@ffmpeg/ffmpeg@0.12.15");
+ const {FFmpeg}=await Promise.race([import("https://esm.sh/@ffmpeg/ffmpeg@0.12.15"),new Promise((_,reject)=>setTimeout(()=>reject(new Error("Video engine package did not load within 60 seconds. Check your connection and retry.")),60000))]);
  const ffmpeg=new FFmpeg();
  ffmpeg.__clipFactoryLogs=[];
  ffmpeg.on("log",({message})=>{ffmpeg.__clipFactoryLogs.push(String(message));if(ffmpeg.__clipFactoryLogs.length>80)ffmpeg.__clipFactoryLogs.shift();});
- ffmpeg.on("progress",({progress})=>engineProgress("Processing video…",ffmpegProgressBase+Math.max(0,Math.min(1,Number(progress)||0))*ffmpegProgressSpan));
+ ffmpeg.__lastProgressAt=Date.now();
+ ffmpeg.on("progress",({progress})=>{ffmpeg.__lastProgressAt=Date.now();engineProgress("Processing video…",ffmpegProgressBase+Math.max(0,Math.min(1,Number(progress)||0))*ffmpegProgressSpan)});
  const assetBase=window.location.origin+"/ffmpeg/";
  let loadTimer;
  try{
@@ -167,33 +176,32 @@ async function getFFmpeg(){
  }finally{clearTimeout(loadTimer)}
  state.ffmpeg=ffmpeg;return ffmpeg;
 }
-async function execFFmpegWithTimeout(ffmpeg,args,timeoutMs=30*60*1000){
- let timer;
+async function execFFmpegWithTimeout(ffmpeg,args,timeoutMs=30*60*1000,stallTimeoutMs=8*60*1000){
+ let timer,watchdog;
+ ffmpeg.__lastProgressAt=Date.now();
+ const stopEngine=()=>{try{ffmpeg.terminate()}catch(e){}if(state.ffmpeg===ffmpeg)state.ffmpeg=null;};
  try{
   return await Promise.race([
    ffmpeg.exec(args),
-   new Promise((_,reject)=>{timer=setTimeout(()=>{
-    try{ffmpeg.terminate()}catch(e){}
-    if(state.ffmpeg===ffmpeg)state.ffmpeg=null;
-    reject(new Error("Render timed out after 30 minutes. The video engine was reset; retry this file or use a shorter clip."));
-   },timeoutMs)})
+   new Promise((_,reject)=>{timer=setTimeout(()=>{stopEngine();reject(new Error("Render exceeded the 30-minute safety limit. The video engine was reset; retry this file or use a shorter clip."))},timeoutMs)}),
+   new Promise((_,reject)=>{watchdog=setInterval(()=>{if(Date.now()-(ffmpeg.__lastProgressAt||Date.now())>stallTimeoutMs){clearInterval(watchdog);stopEngine();reject(new Error("Render stopped responding for 8 minutes. The video engine was reset; retry this file or use a shorter clip."))}},15000)})
   ]);
- }finally{clearTimeout(timer)}
+ }finally{clearTimeout(timer);clearInterval(watchdog)}
 }
 async function uploadMedia(file,projectId,kind,forceBackup=false,onProgress){
-  const init=await api("/media/upload/init",{method:"POST",body:JSON.stringify({file_name:file.name,file_size:file.size,content_type:file.type,project_id:projectId,kind,force_backup:forceBackup})});
+  const init=await api("/media/upload/init",{method:"POST",timeoutMs:60000,body:JSON.stringify({file_name:file.name,file_size:file.size,content_type:file.type,project_id:projectId,kind,force_backup:forceBackup})});
   const parts=[],chunkSize=16*1024*1024,totalParts=Math.ceil(file.size/chunkSize);
   try{
    for(let partNumber=1;partNumber<=totalParts;partNumber++){
     const start=(partNumber-1)*chunkSize,end=Math.min(file.size,start+chunkSize);
     const chunk=file.slice(start,end);
     engineProgress("Uploading "+file.name+" · part "+partNumber+"/"+totalParts,Math.min(14,5+(partNumber/totalParts)*9));
-    const part=await api("/media/upload/"+init.upload_id+"/part?partNumber="+partNumber,{method:"PUT",body:chunk,headers:{"Content-Type":"application/octet-stream"}});
+    const part=await api("/media/upload/"+init.upload_id+"/part?partNumber="+partNumber,{method:"PUT",timeoutMs:120000,body:chunk,headers:{"Content-Type":"application/octet-stream"}});
     parts.push({partNumber:part.part_number,etag:part.etag});if(onProgress)onProgress(Math.round(partNumber/totalParts*100),"Uploading chunk "+partNumber+"/"+totalParts);
    }
    let completed;
    try{
-    completed=await api("/media/upload/"+init.upload_id+"/complete",{method:"POST",body:JSON.stringify({parts})});
+    completed=await api("/media/upload/"+init.upload_id+"/complete",{method:"POST",timeoutMs:90000,body:JSON.stringify({parts})});
    }catch(completeError){
     const listing=await api("/media?project_id="+encodeURIComponent(projectId));
     const recovered=(listing.assets||[]).find(asset=>asset.kind===kind&&asset.file_name===file.name&&Number(asset.size_bytes)===file.size);
@@ -204,7 +212,7 @@ async function uploadMedia(file,projectId,kind,forceBackup=false,onProgress){
    if(kind==="source"&&state.user?.role!=="admin"&&completed.balance!==null&&completed.balance!==undefined)updatePoints(completed.balance,false);
    return completed;
   }catch(error){
-   await api("/media/upload/"+init.upload_id+"/cancel",{method:"POST",body:"{}"}).catch(()=>{});
+   await api("/media/upload/"+init.upload_id+"/cancel",{method:"POST",timeoutMs:20000,body:"{}"}).catch(()=>{});
    await refresh().catch(()=>{});
    if(!forceBackup&&init.storage==="primary"){
     engineProgress("Primary storage unavailable. Retrying on backup storage…",5,true);
