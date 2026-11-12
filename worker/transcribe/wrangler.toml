@@ -1,0 +1,21 @@
+name = "clipfactory-transcribe"
+main = "index.js"
+compatibility_date = "2026-11-12"
+
+[vars]
+ALLOWED_ORIGIN = "https://clipfactory-aer.pages.dev"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "clipfactory-db"
+database_id = "0dda2127-8c55-44e0-8716-22db54dbdfb9"
+
+[ai]
+binding = "AI"
+
+[observability]
+enabled = true
+
+[observability.logs]
+enabled = true
+invocation_logs = true
