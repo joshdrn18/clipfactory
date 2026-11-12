@@ -567,6 +567,23 @@ function validateSubtitleCuesForRender(cues,duration=Infinity){
   if(Number.isFinite(duration)&&end>duration+.05)throw new Error("Caption "+(i+1)+" ends after the video. Adjust its end time before rendering.");
  }
 }
+function parseMediaDurationFromFFmpegLog(log){
+ const match=String(log||"").match(/Duration:\s*(\d{2,}):(\d{2}):(\d{2}(?:\.\d+)?)/i);
+ if(!match)return null;
+ return Number(match[1])*3600+Number(match[2])*60+Number(match[3]);
+}
+async function verifySubtitleMp4Duration(ffmpeg,path,sourceDuration){
+ ffmpeg.__clipFactoryLogs=[];
+ try{await ffmpeg.exec(["-i",path]);}catch(error){}
+ const probeLog=ffmpeg.__clipFactoryLogs.join("\n");
+ const outputDuration=parseMediaDurationFromFFmpegLog(probeLog);
+ if(!Number.isFinite(outputDuration)||outputDuration<=0)throw new Error("Could not verify the finished MP4 duration. The file was not saved; retry the render.");
+ const tolerance=Math.max(1.25,sourceDuration*.005);
+ const difference=Math.abs(outputDuration-sourceDuration);
+ if(difference>tolerance)throw new Error("The encoded MP4 duration differs from the source by "+difference.toFixed(2)+" seconds. The export was stopped to prevent a truncated or extended video.");
+ if(!/Video:\s*h264/i.test(probeLog))throw new Error("The finished MP4 could not be confirmed as H.264. The export was not saved.");
+ return {outputDuration,probeLog};
+}
 async function burnSubtitleExport(){
  const file=state.subtitleSourceFile,cues=state.subtitleCues||[];
  if(!file||!state.subtitleProjectId||!cues.length){toast("Generate subtitles first.");return}
@@ -586,11 +603,14 @@ async function burnSubtitleExport(){
   const inputBytes=new Uint8Array(await blob.arrayBuffer());
   tempInput="./subtitle-burn-"+Date.now()+".webm";tempOutput="./"+file.name.replace(/\.[^.]+$/,"")+"_subtitled.mp4";
   await ffmpeg.writeFile(tempInput,inputBytes);
+  ffmpeg.__clipFactoryLogs=[];
   const code=await execFFmpegWithTimeout(ffmpeg,["-i",tempInput,"-map","0:v:0","-map","0:a?","-c:v","libx264","-preset","ultrafast","-crf","25","-pix_fmt","yuv420p","-c:a","aac","-b:a","160k","-movflags","+faststart",tempOutput],30*60*1000,8*60*1000);
   if(code!==0)throw new Error("MP4 encoding failed. Check FFmpeg logs and retry.");
   const encodeLog=ffmpeg.__clipFactoryLogs.join("\n");
   if(!/Video:\s*h264/i.test(encodeLog))throw new Error("The MP4 encoder did not confirm an H.264 video stream. The export was stopped because the file could be incomplete.");
   if(recording.audioTrackCount>0&&!/Audio:\s*aac/i.test(encodeLog))throw new Error("The source audio track was detected, but the MP4 encoder did not report an AAC audio stream. The export was stopped to avoid saving a silent video.");
+  const durationCheck=await verifySubtitleMp4Duration(ffmpeg,tempOutput,recording.sourceDuration);
+  if(recording.audioTrackCount>0&&!/Audio:\s*aac/i.test(durationCheck.probeLog))throw new Error("The finished MP4 duration was checked, but its AAC audio stream could not be confirmed. The export was not saved.");
   const bytes=await ffmpeg.readFile(tempOutput);
   if(!bytes||bytes.byteLength<1024||String.fromCharCode(...bytes.slice(4,8))!=="ftyp")throw new Error("The MP4 encoder returned an invalid or incomplete file. Retry the render.");
   const exported=new File([bytes],file.name.replace(/\.[^.]+$/,"")+"_subtitled.mp4",{type:"video/mp4"});
