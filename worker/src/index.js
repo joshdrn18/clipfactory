@@ -77,6 +77,14 @@ if(method==="GET"&&path==="/points/packages"){const {results}=await env.DB.prepa
   return json({token,user:{id:user.id,name:user.name,email:user.email,role:user.role}});
  }
  const user=await auth(req,env);
+ if(path==="/me"&&method==="GET"){
+  if(!user)return fail("Please sign in.",401);
+  const [wallet,projects]=await Promise.all([
+   env.DB.prepare("SELECT balance FROM wallets WHERE user_id=?").bind(user.id).first(),
+   env.DB.prepare("SELECT id,name,kind,status,created_at,updated_at FROM projects WHERE user_id=? ORDER BY updated_at DESC,created_at DESC LIMIT 200").bind(user.id).all()
+  ]);
+  return json({user:{id:user.id,name:user.name,email:user.email,role:user.role},wallet:{balance:wallet?.balance||0,unlimited:user.role==="admin"},projects:projects.results||[]});
+ }
  if(path==="/auth/logout"&&method==="POST"){
   const token=(req.headers.get("Authorization")||"").replace(/^Bearer\s+/i,"");
   if(token){
