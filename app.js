@@ -253,35 +253,45 @@ function cleanSubtitleText(value){
 function normalizeSubtitleCues(input,duration=Infinity){
  const output=[];
  for(const raw of (input||[])){
-  const text=cleanSubtitleText(raw.text),start=Math.max(0,Number(raw.start)||0),end=Math.min(duration,Math.max(start+.2,Number(raw.end)||start+.2));
-  if(!text||end<=start)continue;
+  const text=cleanSubtitleText(raw.text);
+  const start=Math.max(0,Number(raw.start)||0);
+  const rawEnd=Number(raw.end);
+  const end=Math.min(duration,Math.max(start+.2,Number.isFinite(rawEnd)?rawEnd:start+.2));
+  if(!text||!Number.isFinite(start)||!Number.isFinite(end)||end<=start)continue;
   const words=text.split(" "),parts=[];let line="";
   for(const word of words){
    const candidate=line?line+" "+word:word;
    if(line&&(candidate.length>38||line.split(" ").length>=7)){parts.push(line);line=word}else line=candidate;
   }
   if(line)parts.push(line);
-  const span=end-start,weights=parts.map(part=>Math.max(1,part.split(" ").length)),total=weights.reduce((a,b)=>a+b,0);
+  const span=end-start;
+  // Keep short utterances together. Splitting a short timestamp window creates
+  // unreadably brief captions and makes the text appear to flicker.
+  if(parts.length>1&&span/parts.length<.45){parts.length=0;parts.push(text);}
+  const weights=parts.map(part=>Math.max(1,part.split(" ").length)),total=weights.reduce((a,b)=>a+b,0);
+  const minimum=parts.length>1?.45:0;
+  const distributable=Math.max(0,span-minimum*parts.length);
   let cursor=start;
   parts.forEach((part,index)=>{
-   const partEnd=index===parts.length-1?end:cursor+span*weights[index]/total;
-   output.push({start:cursor,end:Math.max(cursor+.05,partEnd),text:part});
+   const partEnd=index===parts.length-1?end:cursor+minimum+distributable*weights[index]/total;
+   if(partEnd>cursor)output.push({start:cursor,end:partEnd,text:part});
    cursor=partEnd;
   });
  }
  output.sort((a,b)=>a.start-b.start||a.end-b.end);
- // Rebuild a strictly ordered timeline. If Whisper segments overlap, preserve
- // their wording and move the later caption after the previous caption.
+ // Resolve Whisper segment overlap by shortening the earlier caption, never by
+ // moving a later caption away from its recognized speech timestamp.
  const clean=[];
  for(const cue of output){
-  let start=Math.max(0,Number(cue.start)||0),end=Math.max(start+.05,Number(cue.end)||start+.05);
+  const start=Math.max(0,Number(cue.start)||0);
+  let end=Math.min(duration,Math.max(start,Number(cue.end)||start));
+  if(!cue.text||!Number.isFinite(start)||!Number.isFinite(end)||end<=start)continue;
   const previous=clean[clean.length-1];
-  if(previous&&start<previous.end)start=previous.end;
-  if(Number.isFinite(duration)){
-   if(start>=duration)continue;
-   end=Math.min(duration,Math.max(start+.05,end));
+  if(previous&&start<previous.end){
+   previous.end=start;
+   if(previous.end-previous.start<.08)clean.pop();
   }
-  if(end>start)clean.push({start,end,text:cue.text});
+  if(end-start>=.08)clean.push({start,end,text:cue.text});
  }
  return clean;
 }
