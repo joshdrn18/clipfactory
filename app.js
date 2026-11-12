@@ -245,6 +245,9 @@ $("createBatch").onclick=async()=>{
    let input="",engineUsed=false;
    try{
     if(!state.ffmpeg){engineProgress("Recovering video engine before the next file…",engineProgressValue,false);ffmpeg=await getFFmpeg();activeFFmpeg=ffmpeg;}
+    engineProgress("Reading video duration…",Math.max(engineProgressValue,15+(fi/files.length)*75),false,"Checking this source before uploading or copying it into browser memory.");
+    const duration=await readVideoDuration(file);
+    if(!duration)throw new Error("Could not read video duration for "+file.name);
     setUploadFileStatus(fi,"Starting upload",0,"active");
     engineProgress("Uploading original "+(fi+1)+"/"+files.length+" · "+file.name,5+fi/files.length*10);
     await uploadMedia(file,project.id,"source",false,(pct,label)=>setUploadFileStatus(fi,label,pct,"active"));
@@ -256,9 +259,6 @@ $("createBatch").onclick=async()=>{
     engineProgress("Loading "+file.name+" into video engine…",16+fi/files.length*10,false,"Copying the source video into browser memory.");
     temporaryFFmpegFiles.add(input);
     await ffmpeg.writeFile(input,inputBytes);
-    engineProgress("Reading video duration…",17+fi/files.length*10,false,"Checking video metadata before rendering.");
-    const duration=await readVideoDuration(file);
-    if(!duration)throw new Error("Could not read video duration for "+file.name);
     const segments=workflow==="clips"?Math.ceil(duration/clipSeconds):1;
     let fileExports=0;
     for(let si=0;si<segments;si++){
