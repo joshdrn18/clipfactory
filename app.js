@@ -407,12 +407,19 @@ async function recordBurnedSubtitleVideo(file,cues,settings,onProgress){
   canvas.width=Math.max(2,Math.round(video.videoWidth*ratio/2)*2);
   canvas.height=Math.max(2,Math.round(video.videoHeight*ratio/2)*2);
   await waitFor(video,"canplay",60000,"The source video could not start decoding. Try another MP4 export.");
+  if(typeof canvas.captureStream!=="function")throw new Error("This browser cannot capture the subtitle canvas. Update Chrome or Edge and retry.");
   canvasStream=canvas.captureStream(30);
   sourceStream=video.captureStream?video.captureStream():video.mozCaptureStream?.();
   if(!sourceStream)throw new Error("This browser cannot capture the source video. Use the latest Chrome or Edge.");
   const sourceAudioTracks=sourceStream.getAudioTracks();
-  sourceAudioTracks.forEach(track=>canvasStream.addTrack(track));
+  sourceAudioTracks.forEach(track=>{
+   if(track.readyState!=="live")throw new Error("The source audio track stopped before rendering began. Reload the video and retry.");
+   track.enabled=true;
+   canvasStream.addTrack(track);
+  });
   if(typeof MediaRecorder==="undefined"||typeof MediaRecorder.isTypeSupported!=="function")throw new Error("This browser does not support video recording. Use the latest Chrome or Edge.");
+  if(!canvasStream.getVideoTracks().length)throw new Error("The subtitle renderer could not create a video track. Retry in the latest Chrome or Edge.");
+  if(sourceAudioTracks.length&&!canvasStream.getAudioTracks().length)throw new Error("The source has audio, but the browser could not attach it to the recording. No silent export was created.");
   const mime=["video/webm;codecs=vp9,opus","video/webm;codecs=vp8,opus","video/webm"].find(type=>MediaRecorder.isTypeSupported(type));
   if(!mime)throw new Error("No supported browser recording format was found.");
   recorder=new MediaRecorder(canvasStream,{mimeType:mime,videoBitsPerSecond:Math.min(8000000,Math.max(2500000,canvas.width*canvas.height*3))});
@@ -448,7 +455,9 @@ async function recordBurnedSubtitleVideo(file,cues,settings,onProgress){
   if(recorder.state==="recording")recorder.stop();
   const blob=await result;
   if(!blob.size)throw new Error("Subtitle render produced an empty recording.");
-  return {blob,audioTrackCount:sourceAudioTracks.length};
+  if(blob.type&&!blob.type.toLowerCase().includes("webm"))throw new Error("The browser returned an unexpected recording format. Retry in the latest Chrome or Edge.");
+  if(sourceAudioTracks.length&&(!canvasStream.getAudioTracks().length||sourceAudioTracks.some(track=>track.readyState!=="live"||!track.enabled)))throw new Error("The source audio track was lost during recording. The export was stopped to protect your audio.");
+  return {blob,audioTrackCount:sourceAudioTracks.length,sourceDuration:video.duration};
  }catch(error){
   if(recorder&&recorder.state==="recording"){try{recorder.stop()}catch(e){}}
   throw error;
@@ -484,7 +493,9 @@ async function burnSubtitleExport(){
   await ffmpeg.writeFile(tempInput,inputBytes);
   const code=await execFFmpegWithTimeout(ffmpeg,["-i",tempInput,"-map","0:v:0","-map","0:a?","-c:v","libx264","-preset","ultrafast","-crf","25","-pix_fmt","yuv420p","-c:a","aac","-b:a","160k","-movflags","+faststart",tempOutput],30*60*1000,8*60*1000);
   if(code!==0)throw new Error("MP4 encoding failed. Check FFmpeg logs and retry.");
-  if(recording.audioTrackCount>0&&!ffmpeg.__clipFactoryLogs.some(line=>/Audio:\s*aac/i.test(line)))throw new Error("The source audio track was detected, but the MP4 encoder did not report an AAC audio stream. The export was stopped to avoid saving a silent video.");
+  const encodeLog=ffmpeg.__clipFactoryLogs.join("\n");
+  if(!/Video:\s*h264/i.test(encodeLog))throw new Error("The MP4 encoder did not confirm an H.264 video stream. The export was stopped because the file could be incomplete.");
+  if(recording.audioTrackCount>0&&!/Audio:\s*aac/i.test(encodeLog))throw new Error("The source audio track was detected, but the MP4 encoder did not report an AAC audio stream. The export was stopped to avoid saving a silent video.");
   const bytes=await ffmpeg.readFile(tempOutput);
   if(!bytes||bytes.byteLength<1024||String.fromCharCode(...bytes.slice(4,8))!=="ftyp")throw new Error("The MP4 encoder returned an invalid or incomplete file. Retry the render.");
   const exported=new File([bytes],file.name.replace(/\.[^.]+$/,"")+"_subtitled.mp4",{type:"video/mp4"});
