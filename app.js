@@ -1,5 +1,5 @@
 const API_DEFAULT = "https://clipfactory-api.joshdrn18.workers.dev";
-const state = { token: localStorage.getItem("cf_token") || "", user: null, points: 0, projects: [], files: [], packages: [], authMode: "login", adminTab:"overview", ffmpeg:null };
+const state = { token: localStorage.getItem("cf_token") || "", user: null, points: 0, projects: [], files: [], packages: [], authMode: "login", adminTab:"overview", ffmpeg:null,subtitleCues:[],subtitleSourceFile:null,subtitleProjectId:null };
 const $ = (id) => document.getElementById(id);
 const apiBase = () => localStorage.getItem("cf_api_url") || API_DEFAULT;
 async function api(path, options={}) {
@@ -262,7 +262,8 @@ function renderSubtitleEditor(){
  const cues=state.subtitleCues||[];
  panel.hidden=!cues.length;
  if(!cues.length)return;
- panel.innerHTML='<div class="subtitle-editor-head"><div><strong>Subtitle editor</strong><small>'+cues.length+' timed captions · '+escapeHtml(state.subtitleFileName||"Video")+'</small></div><div class="subtitle-downloads"><button class="btn btn-ghost" id="downloadVtt">Download VTT</button><button class="btn btn-ghost" id="downloadSrt">Download SRT</button></div></div><div class="subtitle-cue-list">'+cues.map((c,i)=>'<article class="subtitle-cue" data-cue="'+i+'"><div class="subtitle-cue-times"><label>Start (sec)<input type="number" min="0" step="0.05" data-cue-start="'+i+'" value="'+Number(c.start).toFixed(2)+'"></label><label>End (sec)<input type="number" min="0" step="0.05" data-cue-end="'+i+'" value="'+Number(c.end).toFixed(2)+'"></label></div><label class="subtitle-cue-text">Caption<textarea rows="2" data-cue-text="'+i+'">'+escapeHtml(c.text)+'</textarea></label></article>').join("")+'</div><small class="subtitle-note">Edit the wording or timing, then download the subtitle file. Video burn-in rendering is the next integration step.</small>';
+ panel.innerHTML='<div class="subtitle-editor-head"><div><strong>Subtitle editor</strong><small>'+cues.length+' timed captions · '+escapeHtml(state.subtitleFileName||"Video")+'</small></div><div class="subtitle-downloads"><button class="btn btn-ghost" id="downloadVtt">Download VTT</button><button class="btn btn-ghost" id="downloadSrt">Download SRT</button></div></div><div class="subtitle-render-settings"><label>Subtitle position<select id="subtitlePosition"><option value="bottom">Bottom</option><option value="center">Center</option><option value="top">Top</option></select></label><label>Text size<select id="subtitleSize"><option value="small">Small</option><option value="medium" selected>Medium</option><option value="large">Large</option></select></label><label>Text color<select id="subtitleColor"><option value="#ffffff">White</option><option value="#ffe45c">Yellow</option><option value="#70e1ff">Cyan</option></select></label><label>Background<select id="subtitleBackground"><option value="outline">Black outline</option><option value="box">Dark box</option><option value="none">No background</option></select></label></div><button class="btn btn-primary subtitle-burn-button" id="burnSubtitles">Burn subtitles into MP4 →</button><small class="subtitle-note">The edited captions and selected appearance will be rendered into a new MP4 and saved to My Videos.</small><div class="subtitle-cue-list">'+cues.map((c,i)=>'<article class="subtitle-cue" data-cue="'+i+'"><div class="subtitle-cue-times"><label>Start (sec)<input type="number" min="0" step="0.05" data-cue-start="'+i+'" value="'+Number(c.start).toFixed(2)+'"></label><label>End (sec)<input type="number" min="0" step="0.05" data-cue-end="'+i+'" value="'+Number(c.end).toFixed(2)+'"></label></div><label class="subtitle-cue-text">Caption<textarea rows="2" data-cue-text="'+i+'">'+escapeHtml(c.text)+'</textarea></label></article>').join("")+'</div>';
+ $("burnSubtitles").onclick=burnSubtitleExport;
  panel.querySelectorAll("[data-cue-start],[data-cue-end],[data-cue-text]").forEach(el=>el.addEventListener("input",()=>{
   const i=Number(el.dataset.cueStart??el.dataset.cueEnd??el.dataset.cueText),cue=state.subtitleCues[i];if(!cue)return;
   if(el.hasAttribute("data-cue-start"))cue.start=Math.max(0,Number(el.value)||0);
@@ -283,6 +284,97 @@ async function transcribeAudio(form,timeoutMs=180000){
  }catch(error){if(controller.signal.aborted)throw new Error("Speech recognition timed out. Retry this audio segment.");throw error}
  finally{clearTimeout(timer)}
 }
+function drawSubtitleFrame(ctx,video,width,height,cue,settings){
+ ctx.drawImage(video,0,0,width,height);
+ if(!cue||!cue.text)return;
+ const scale=width/1080,fontSize=(settings.size==="small"?34:settings.size==="large"?58:44)*scale;
+ ctx.save();ctx.font="800 "+fontSize+"px Arial, sans-serif";ctx.textAlign="center";ctx.textBaseline="middle";
+ const maxWidth=width*.88,words=String(cue.text).replace(/<[^>]*>/g,"").split(/\s+/),lines=[];let line="";
+ for(const word of words){const test=line?line+" "+word:word;if(ctx.measureText(test).width>maxWidth&&line){lines.push(line);line=word}else line=test}
+ if(line)lines.push(line);
+ const lineHeight=fontSize*1.2,pad=fontSize*.34,totalHeight=lines.length*lineHeight;
+ let centerY=settings.position==="top"?height*.13+totalHeight/2:settings.position==="center"?height*.5:height*.86-totalHeight/2;
+ const color=settings.color;
+ if(settings.background==="box"){
+  const maxLine=Math.max(...lines.map(x=>ctx.measureText(x).width));
+  ctx.fillStyle="rgba(0,0,0,.72)";ctx.fillRect((width-maxLine)/2-pad,centerY-totalHeight/2-pad,maxLine+pad*2,totalHeight+pad*2);
+ }
+ lines.forEach((text,index)=>{const y=centerY-totalHeight/2+lineHeight*(index+.5);
+  if(settings.background==="outline"){ctx.lineJoin="round";ctx.strokeStyle="rgba(0,0,0,.96)";ctx.lineWidth=Math.max(4,fontSize*.16);ctx.strokeText(text,width/2,y,maxWidth)}
+  ctx.fillStyle=color;ctx.fillText(text,width/2,y,maxWidth);
+ });
+ ctx.restore();
+}
+async function recordBurnedSubtitleVideo(file,cues,settings,onProgress){
+ const video=document.createElement("video"),url=URL.createObjectURL(file),canvas=document.createElement("canvas"),ctx=canvas.getContext("2d",{alpha:false});
+ video.src=url;video.muted=false;video.playsInline=true;video.preload="auto";
+ await new Promise((resolve,reject)=>{video.onloadedmetadata=resolve;video.onerror=()=>reject(new Error("The source video could not be opened by this browser."));});
+ const ratio=Math.min(1,1920/Math.max(video.videoWidth,video.videoHeight));
+ canvas.width=Math.max(2,Math.round(video.videoWidth*ratio/2)*2);canvas.height=Math.max(2,Math.round(video.videoHeight*ratio/2)*2);
+ const canvasStream=canvas.captureStream(30),sourceStream=video.captureStream?video.captureStream():video.mozCaptureStream?.();
+ if(!sourceStream)throw new Error("This browser cannot capture the source video's audio. Use the latest Chrome or Edge.");
+ sourceStream.getAudioTracks().forEach(track=>canvasStream.addTrack(track));
+ const mime=["video/webm;codecs=vp9,opus","video/webm;codecs=vp8,opus","video/webm"].find(type=>MediaRecorder.isTypeSupported(type));
+ if(!mime)throw new Error("Media recording is not supported by this browser.");
+ const recorder=new MediaRecorder(canvasStream,{mimeType:mime,videoBitsPerSecond:Math.min(8000000,Math.max(2500000,canvas.width*canvas.height*3))});
+ const chunks=[];
+ const stopTracks=()=>{canvasStream.getTracks().forEach(t=>t.stop());sourceStream.getTracks().forEach(t=>t.stop());URL.revokeObjectURL(url)};
+ const result=new Promise((resolve,reject)=>{
+  recorder.ondataavailable=e=>{if(e.data?.size)chunks.push(e.data)};
+  recorder.onerror=()=>reject(new Error("Browser recording failed while burning subtitles."));
+  recorder.onstop=()=>resolve(new Blob(chunks,{type:mime}));
+ });
+ let raf=0;
+ const paint=()=>{
+  const now=video.currentTime,cue=cues.find(c=>now>=c.start&&now<=c.end);
+  drawSubtitleFrame(ctx,video,canvas.width,canvas.height,cue,settings);
+  onProgress?.(Math.min(92,video.duration?now/video.duration*92:0),now,video.duration);
+  if(!video.paused&&!video.ended)raf=requestAnimationFrame(paint);
+ };
+ try{
+  await video.play();
+  recorder.start(1000);
+  const frame=()=>{paint();if(!video.paused&&!video.ended)raf=requestAnimationFrame(frame)};
+  frame();
+  await new Promise((resolve,reject)=>{video.onended=resolve;video.onerror=()=>reject(new Error("Source playback failed during subtitle rendering."));video.onpause=()=>{if(!video.ended&&recorder.state==="recording")reject(new Error("Video playback paused unexpectedly. Keep the tab active during rendering."))}});
+  if(recorder.state==="recording")recorder.stop();
+  const blob=await result;
+  if(!blob.size)throw new Error("Subtitle render produced an empty video.");
+  return blob;
+ }catch(error){if(recorder.state==="recording")recorder.stop();throw error}
+ finally{cancelAnimationFrame(raf);video.pause();stopTracks()}
+}
+async function burnSubtitleExport(){
+ const file=state.subtitleSourceFile,cues=state.subtitleCues||[];
+ if(!file||!state.subtitleProjectId||!cues.length){toast("Generate subtitles first.");return}
+ const button=$("burnSubtitles");button.disabled=true;
+ let ffmpeg=null,tempInput="",tempOutput="";
+ try{
+  const settings={position:$("subtitlePosition").value,size:$("subtitleSize").value,color:$("subtitleColor").value,background:$("subtitleBackground").value};
+  engineProgress("Rendering subtitles into video…",0,true,"Keep this tab active. The browser will play the video once while drawing captions.");
+  const blob=await recordBurnedSubtitleVideo(file,cues,settings,(pct,now,total)=>engineProgress("Burning subtitles · "+Math.floor(now)+"s / "+Math.floor(total)+"s",pct,false,"Captions are being drawn into every video frame."));
+  engineProgress("Encoding MP4…",93,false,"Converting the browser recording into a compatible MP4.");
+  ffmpeg=await getFFmpeg();
+  const inputBytes=new Uint8Array(await blob.arrayBuffer());
+  tempInput="./subtitle-burn-"+Date.now()+".webm";tempOutput="./"+file.name.replace(/\.[^.]+$/,"")+"_subtitled.mp4";
+  await ffmpeg.writeFile(tempInput,inputBytes);
+  const code=await execFFmpegWithTimeout(ffmpeg,["-i",tempInput,"-map","0:v:0","-map","0:a?","-c:v","libx264","-preset","ultrafast","-crf","25","-pix_fmt","yuv420p","-c:a","aac","-b:a","160k","-movflags","+faststart",tempOutput],30*60*1000,8*60*1000);
+  if(code!==0)throw new Error("MP4 encoding failed. Check FFmpeg logs and retry.");
+  const bytes=await ffmpeg.readFile(tempOutput);
+  const exported=new File([bytes],file.name.replace(/\.[^.]+$/,"")+"_subtitled.mp4",{type:"video/mp4"});
+  engineProgress("Saving subtitled MP4…",96,false,"Uploading the rendered video to your ClipFactory storage.");
+  const saved=await uploadMedia(exported,state.subtitleProjectId,"export");
+  await api("/projects/"+encodeURIComponent(state.subtitleProjectId)+"/complete",{method:"POST",body:"{}"}).catch(()=>{});
+  engineProgress("Subtitled video saved",100,false,"Your new MP4 is available in My Videos.");
+  toast("Subtitled MP4 saved to My Videos.");
+  await refresh().catch(()=>{});
+  showView("videos");
+ }catch(error){engineProgress("Subtitle render failed",engineProgressValue,false,error.message||"Retry the render.");toast(error.message||"Subtitle render failed.");}
+ finally{
+  if(ffmpeg){for(const name of [tempInput,tempOutput])if(name){try{await ffmpeg.deleteFile(name)}catch(e){}}}
+  button.disabled=false;
+ }
+}
 async function createSubtitleBatch(files){
  if(files.length!==1){toast("For subtitle editing, select one video at a time.");return}
  if(!$("createBatch").disabled)$("createBatch").disabled=true;
@@ -294,6 +386,7 @@ async function createSubtitleBatch(files){
   if(!duration||!Number.isFinite(duration))throw new Error("Could not read this video's duration.");
   engineProgress("Preparing subtitle transcription…",2,true,"Extracting short audio chunks locally. Your full video is not uploaded for transcription.");
   const projectData=await api("/projects",{method:"POST",body:JSON.stringify({name:"Subtitles · "+file.name,kind:"Subtitle transcription",settings:{fileName:file.name,duration}})});
+  state.subtitleSourceFile=file;state.subtitleProjectId=projectData.project.id;
   state.projects.unshift(projectData.project);$("statProjects").textContent=state.projects.length;
   ffmpeg=await getFFmpeg();
   const {fetchFile}=await import("https://esm.sh/@ffmpeg/util@0.12.2");
