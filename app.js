@@ -263,10 +263,12 @@ $("createBatch").onclick=async()=>{
     engineProgress("Upload complete · preparing "+file.name+" for processing…",15+fi/files.length*10);
     input="input-"+fi+"-"+Date.now()+".mp4";
     engineUsed=true;
-    const inputBytes=await fetchFile(file);
+    let inputBytes=await fetchFile(file);
     engineProgress("Loading "+file.name+" into video engine…",16+fi/files.length*10,false,"Copying the source video into browser memory.");
     temporaryFFmpegFiles.add(input);
     await ffmpeg.writeFile(input,inputBytes);
+    // Release the duplicate JavaScript buffer once FFmpeg owns the source file.
+    inputBytes=null;
     const segments=workflow==="clips"?Math.ceil(duration/clipSeconds):1;
     plannedSegments=segments;
     for(let si=0;si<segments;si++){
@@ -286,8 +288,10 @@ $("createBatch").onclick=async()=>{
       const diagnostics=(ffmpeg.__clipFactoryLogs||[]).slice(-18).join("\n");
       throw new Error("FFmpeg exited with code "+code+" while rendering "+file.name+(diagnostics?"\n\nFFmpeg log:\n"+diagnostics:""));
      }
-     const bytes=await ffmpeg.readFile(ffmpegOutput),blob=new Blob([bytes.buffer],{type:"video/mp4"});
-     const exported=new File([blob],output,{type:"video/mp4"});
+     let outputBytes=await ffmpeg.readFile(ffmpegOutput);
+     const exported=new File([outputBytes],output,{type:"video/mp4"});
+     // File now owns the export data; drop the extra Uint8Array reference before upload.
+     outputBytes=null;
      engineProgress("Saving "+output+" to cloud storage…",ffmpegProgressBase+taskProgressSpan*0.9,false,"Uploading the finished export. It will appear in My Videos when saved.");
      const saved=await uploadMedia(exported,project.id,"export");
      results.push(saved.asset);
@@ -315,6 +319,14 @@ $("createBatch").onclick=async()=>{
      try{await ffmpeg.deleteFile(input)}catch(cleanupError){console.warn("ClipFactory input cleanup:",input,cleanupError)}
      temporaryFFmpegFiles.delete(input);
     }
+   }
+   // Large inputs can leave a high-water mark in the WebAssembly heap. Restart
+   // after each large source to return that memory to the browser before continuing.
+   if(file.size>=128*1024*1024&&state.ffmpeg===ffmpeg){
+    engineProgress("Releasing video memory…",engineProgressValue,false,"Resetting FFmpeg after a large source before the next file.");
+    try{ffmpeg.terminate()}catch(engineError){console.warn("ClipFactory large-file memory reset:",engineError)}
+    state.ffmpeg=null;
+    activeFFmpeg=null;
    }
   }
   if(results.length){
