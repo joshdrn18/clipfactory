@@ -151,11 +151,20 @@ async function getFFmpeg(){
  ffmpeg.on("log",({message})=>{ffmpeg.__clipFactoryLogs.push(String(message));if(ffmpeg.__clipFactoryLogs.length>80)ffmpeg.__clipFactoryLogs.shift();});
  ffmpeg.on("progress",({progress})=>engineProgress("Processing video…",ffmpegProgressBase+Math.max(0,Math.min(1,Number(progress)||0))*ffmpegProgressSpan));
  const assetBase=window.location.origin+"/ffmpeg/";
- await ffmpeg.load({
-  classWorkerURL:assetBase+"worker.js",
-  coreURL:"https://unpkg.com/@ffmpeg/core@0.12.10/dist/esm/ffmpeg-core.js",
-  wasmURL:"https://unpkg.com/@ffmpeg/core@0.12.10/dist/esm/ffmpeg-core.wasm"
- });
+ let loadTimer;
+ try{
+  await Promise.race([
+   ffmpeg.load({
+    classWorkerURL:assetBase+"worker.js",
+    coreURL:"https://unpkg.com/@ffmpeg/core@0.12.10/dist/esm/ffmpeg-core.js",
+    wasmURL:"https://unpkg.com/@ffmpeg/core@0.12.10/dist/esm/ffmpeg-core.wasm"
+   }),
+   new Promise((_,reject)=>{loadTimer=setTimeout(()=>{
+    try{ffmpeg.terminate()}catch(e){}
+    reject(new Error("Video engine could not finish loading within 2 minutes. Check your connection and retry."));
+   },2*60*1000)})
+  ]);
+ }finally{clearTimeout(loadTimer)}
  state.ffmpeg=ffmpeg;return ffmpeg;
 }
 async function execFFmpegWithTimeout(ffmpeg,args,timeoutMs=30*60*1000){
