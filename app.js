@@ -221,9 +221,13 @@ async function uploadMedia(file,projectId,kind,forceBackup=false,onProgress){
    throw error;
   }
  }
-function videoFilter(){
- const dims=$("aspect").value==="9:16"?"1080:1920":$("aspect").value==="1:1"?"1080:1080":"1920:1080";
- return "scale="+dims+":force_original_aspect_ratio=increase,crop="+dims;
+function videoFilterArgs(aspect){
+ const dims=aspect==="9:16"?"1080:1920":aspect==="1:1"?"1080:1080":"1920:1080";
+ if(aspect==="9:16"){
+  // Keep the complete source frame readable; use a blurred, cropped copy as the canvas fill.
+  return ["-filter_complex","[0:v]split=2[bg][fg];[bg]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=20:10[bgblur];[fg]scale=1080:1920:force_original_aspect_ratio=decrease[fgfit];[bgblur][fgfit]overlay=(W-w)/2:(H-h)/2,format=yuv420p[v]","-map","[v]","-map","0:a?"];
+ }
+ return ["-vf","scale="+dims+":force_original_aspect_ratio=increase,crop="+dims,"-map","0:v:0","-map","0:a?"];
 }
 $("createBatch").onclick=async()=>{
  if(!state.files.length)return;
@@ -276,10 +280,11 @@ $("createBatch").onclick=async()=>{
      if(seconds<=0)continue;
      const output=base+(workflow==="clips"?"-clip-"+String(si+1).padStart(2,"0"):"-export")+".mp4";
      const args=["-ss",String(offset),"-i",input,"-t",String(seconds)];
-     if(workflow==="resize"||workflow==="clips")args.push("-vf",videoFilter());
+     if(workflow==="resize"||workflow==="clips")args.push(...videoFilterArgs(aspect));
+     else args.push("-map","0:v:0","-map","0:a?");
      const ffmpegOutput="./"+output;
      temporaryFFmpegFiles.add(ffmpegOutput);
-     args.push("-c:v","libx264","-preset","ultrafast","-crf",workflow==="compress"?"30":"25","-c:a","aac","-b:a","128k","-movflags","+faststart",ffmpegOutput);
+     args.push("-c:v","libx264","-preset","ultrafast","-crf",workflow==="compress"?"30":"25","-pix_fmt","yuv420p","-c:a","aac","-b:a","160k","-movflags","+faststart",ffmpegOutput);
      const taskProgressSpan=75/totalTasks;ffmpegProgressBase=15+(completedTasks/totalTasks)*75;ffmpegProgressSpan=taskProgressSpan*0.8;
      ffmpeg.__operationLabel="Rendering "+output;
      engineProgress("Rendering "+output,ffmpegProgressBase,false,"Output "+(si+1)+" of "+segments+" for "+file.name+". This stage uses browser processing and may take time.");
