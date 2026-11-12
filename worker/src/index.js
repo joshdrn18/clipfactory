@@ -20,7 +20,7 @@ async function backupRequest(env,path,init={}){
  return response;
 }
 async function mediaCreateMultipart(env,key,options){
- if(isBackupKey(key)){const r=await backupRequest(env,"/init",{method:"POST",body:JSON.stringify({key,content_type:options?.httpMetadata?.contentType,kind:options?.customMetadata?.kind})});return (await r.json()).upload_id}
+ if(isBackupKey(key)){const r=await backupRequest(env,"/init",{method:"POST",body:JSON.stringify({key,content_type:options?.httpMetadata?.contentType,kind:options?.customMetadata?.kind})});return {uploadId:(await r.json()).upload_id}}
  return env.MEDIA.createMultipartUpload(key,options);
 }
 async function mediaUploadPart(env,key,uploadId,partNumber,data){
