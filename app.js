@@ -27,12 +27,16 @@ async function loadQueue(){
  root.innerHTML='<div class="empty-state">Refreshing project status…</div>';
  try{const d=await api("/me");state.projects=d.projects||[];$("statProjects").textContent=state.projects.length;renderProjects();renderQueueList()}catch(e){root.innerHTML='<div class="notice">Could not refresh queue: '+escapeHtml(e.message)+'</div>'}
 }
+$("queueSearch")?.addEventListener("input",renderQueueList);$("queueStatusFilter")?.addEventListener("change",renderQueueList);
 function renderQueue(){renderQueueList()}
 function renderQueueList(){
  const root=$("queueList");if(!state.user){root.innerHTML="Sign in to view your processing activity.";return}
- const items=[...state.projects].sort((a,b)=>new Date(b.created_at||0)-new Date(a.created_at||0));
- if(!items.length){root.innerHTML='<div class="empty-state">No projects yet. Start in Bulk Upload to create your first video.</div>';return}
- root.innerHTML='<div class="table-card">'+items.map(p=>'<div class="project-row"><span><strong>'+escapeHtml(p.name)+'</strong></span><span>'+escapeHtml(p.kind||"Video")+'</span><span><i class="status-pill">'+escapeHtml(p.status||"Draft")+'</i></span><span>'+new Date(p.updated_at||p.created_at||Date.now()).toLocaleString()+'</span></div>').join("")+'</div>';
+ const all=[...state.projects];const counts={draft:0,processing:0,completed:0,failed:0};all.forEach(p=>{const s=String(p.status||"draft").toLowerCase();if(Object.prototype.hasOwnProperty.call(counts,s))counts[s]++});
+ $("queueMetrics").innerHTML='<article><span>ALL PROJECTS</span><strong>'+all.length+'</strong></article><article><span>IN PROGRESS</span><strong>'+counts.processing+'</strong></article><article><span>COMPLETED</span><strong>'+counts.completed+'</strong></article><article><span>NEEDS ATTENTION</span><strong>'+counts.failed+'</strong></article>';
+ const q=($("queueSearch")?.value||"").trim().toLowerCase(),filter=$("queueStatusFilter")?.value||"all";const items=all.filter(p=>{const s=String(p.status||"draft").toLowerCase();return (!q||((p.name||"")+" "+(p.kind||"")).toLowerCase().includes(q))&&(filter==="all"||s===filter)}).sort((a,b)=>new Date(b.updated_at||b.created_at||0)-new Date(a.updated_at||a.created_at||0));
+ if(!all.length){root.innerHTML='<div class="empty-state">No projects in the queue yet. Start in Bulk Upload to create your first video.</div>';return}
+ if(!items.length){root.innerHTML='<div class="empty-state">No projects match this queue filter.</div>';return}
+ root.innerHTML='<div class="table-card"><div class="table-head queue-table-head"><span>PROJECT</span><span>TYPE</span><span>STATUS</span><span>LAST UPDATED</span></div>'+items.map(p=>'<div class="project-row"><span><strong>'+escapeHtml(p.name||"Untitled project")+'</strong></span><span>'+escapeHtml(p.kind||"Video")+'</span><span><i class="status-pill">'+escapeHtml(p.status||"Draft")+'</i></span><span>'+(p.updated_at||p.created_at?new Date(p.updated_at||p.created_at).toLocaleString():"—")+'</span></div>').join("")+'</div>';
 }
 async function loadExportCenter(){
  const root=$("exportLibrary");if(!state.user){root.innerHTML="Sign in to view your exports.";return}
