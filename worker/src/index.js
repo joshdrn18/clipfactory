@@ -83,10 +83,15 @@ if(path==="/media/upload/init"&&method==="POST"){
  const id=uid(),baseKey=user.id+"/"+projectId+"/"+id+"-"+fileName;
  let key=baseKey,multipart;
  const usage=await env.DB.prepare("SELECT COALESCE(SUM(size_bytes),0) AS bytes FROM media_assets WHERE object_key NOT LIKE 'backup/%'").first().catch(()=>({bytes:0}));
- const preferBackup=Number(usage?.bytes||0)>=9.5*1024*1024*1024;
- if(preferBackup&&env.BACKUP_URL&&env.BACKUP_TOKEN)key=BACKUP_PREFIX+baseKey;
- try{multipart=await mediaCreateMultipart(env,key,{httpMetadata:{contentType},customMetadata:{userId:user.id,projectId,kind}})}
- catch(primaryError){if(isBackupKey(key)||!env.BACKUP_URL||!env.BACKUP_TOKEN)throw primaryError;key=BACKUP_PREFIX+baseKey;multipart=await mediaCreateMultipart(env,key,{httpMetadata:{contentType},customMetadata:{userId:user.id,projectId,kind}})}
+ const canBackup=!!(env.BACKUP_URL&&env.BACKUP_TOKEN),preferBackup=Number(usage?.bytes||0)>=9.5*1024*1024*1024;
+ if(preferBackup&&canBackup){
+  key=BACKUP_PREFIX+baseKey;
+  try{multipart=await mediaCreateMultipart(env,key,{httpMetadata:{contentType},customMetadata:{userId:user.id,projectId,kind}})}
+  catch(backupError){key=baseKey;multipart=await mediaCreateMultipart(env,key,{httpMetadata:{contentType},customMetadata:{userId:user.id,projectId,kind}})}
+ }else{
+  try{multipart=await mediaCreateMultipart(env,key,{httpMetadata:{contentType},customMetadata:{userId:user.id,projectId,kind}})}
+  catch(primaryError){if(!canBackup)throw primaryError;key=BACKUP_PREFIX+baseKey;multipart=await mediaCreateMultipart(env,key,{httpMetadata:{contentType},customMetadata:{userId:user.id,projectId,kind}})}
+ }
  try{
   await env.DB.prepare("INSERT INTO media_uploads(id,user_id,project_id,kind,file_name,object_key,r2_upload_id,size_bytes,content_type,points_charged) VALUES(?,?,?,?,?,?,?,?,?,?)").bind(id,user.id,projectId,kind,fileName,key,multipart.uploadId,size,contentType,pointsCost).run();
  }catch(e){
