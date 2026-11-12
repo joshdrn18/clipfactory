@@ -49,38 +49,42 @@ async function logUserActivity(env,userId,action,details={}){try{await env.DB.pr
 async function route(req,env){const url=new URL(req.url),path=url.pathname.replace(/^\/api/,""),method=req.method;
 if(method==="GET"&&path==="/health")return json({ok:true,service:"ClipFactory API",version:"0.1.0"});
 if(method==="GET"&&path==="/points/packages"){const {results}=await env.DB.prepare("SELECT code,name,points,price_minor,currency FROM point_packages WHERE active=1 ORDER BY sort_order").all();return json({packages:results})}
-if(method==="POST"&&path==="/auth/register"){const b=await body(req),email=String(b.email||"").trim().toLowerCase(),name=String(b.name||"").trim(),password=String(b.password||"");if(!/^\S+@\S+\.\S+$/.test(email)||password.length<8||name.length<1||name.length>80)return fail("Enter a valid name, email and password (at least 8 characters).");if(await env.DB.prepare("SELECT id FROM users WHERE email=?").bind(email).first())return fail("An account with this email already exists.",409);const id=uid(),salt=hex(crypto.getRandomValues(new Uint8Array(16))),hash=await passwordHash(password,salt),role=email===(env.ADMIN_EMAIL||"").toLowerCase()?"admin":"user";await env.DB.batch([env.DB.prepare("INSERT INTO users(id,name,email,password_hash,password_salt,role) VALUES(?,?,?,?,?,?)").bind(id,name,email,hash,salt,role),env.DB.prepare("INSERT INTO wallets(user_id,balance) VALUES(?,0)").bind(id)]);const token=await createSession(env,id);await logUserActivity(env,id,"account_registered",{});return json({token,user:{id,name,email,role}},201)}
-if(method==="POST"&&path==="/auth/login"){const b=await body(req),email=String(b.email||"").trim().toLowerCase(),user=await env.DB.prepare("SELECT id,name,email,password_hash,password_salt,role,status FROM users WHERE email=?").bind(email).first();if(!user||await passwordHash(String(b.password||""),user.password_salt)!==user.password_hash)return fail("Email or password is incorrect.",401);if(user.status==="suspended")return fail("This account has been suspended. Contact support.",403);if(email===(env.ADMIN_EMAIL||"").toLowerCase()&&user.role!=="admin"){await env.DB.prepare("UPDATE users SET role='admin' WHERE id=?").bind(user.id).run();user.role="admin"}const token=await createSession(env,user.id);await logUserActivity(env,user.id,"login",{method:"password"});return json({token,user:{id:user.id,name:user.name,email:user.email,role:user.role}})}
-const user=await auth(req,env);
-if(path==="/auth/logout"&&method==="POST"){
- const token=(req.headers.get("Authorization")||"").replace(/^Bearer\s+/i,"");
- if(token){
-  await env.DB.prepare("DELETE FROM sessions WHERE token_hash=? AND user_id=?").bind(await digest(token),user.id).run();
-  await logUserActivity(env,user.id,"logout",{});
+ if(method==="POST"&&path==="/auth/register"){
+  const b=await body(req),email=String(b.email||"").trim().toLowerCase(),name=String(b.name||"").trim(),password=String(b.password||"");
+  if(!/^\S+@\S+\.\S+$/.test(email)||email.length>254||password.length<8||password.length>128||name.length<1||name.length>80)return fail("Enter a valid name and email. Password must be 8–128 characters.");
+  if(await env.DB.prepare("SELECT id FROM users WHERE email=?").bind(email).first())return fail("An account with this email already exists.",409);
+  const id=uid(),salt=hex(crypto.getRandomValues(new Uint8Array(16))),hash=await passwordHash(password,salt);
+  // Public sign-up always creates a normal member; admin privileges are never granted by a claimed email address.
+  try{
+   await env.DB.batch([
+    env.DB.prepare("INSERT INTO users(id,name,email,password_hash,password_salt,role,status) VALUES(?,?,?,?,?,'user','active')").bind(id,name,email,hash,salt),
+    env.DB.prepare("INSERT INTO wallets(user_id,balance) VALUES(?,0)").bind(id)
+   ]);
+  }catch(error){
+   if(/unique|constraint/i.test(String(error?.message||error)))return fail("An account with this email already exists.",409);
+   throw error;
+  }
+  const token=await createSession(env,id);await logUserActivity(env,id,"account_registered",{});
+  return json({token,user:{id,name,email,role:"user",status:"active"}},201);
  }
- return json({ok:true});
-}
-if(path==="/me"&&method==="GET"){if(!user)return fail("Please sign in.",401);const wallet=await env.DB.prepare("SELECT balance FROM wallets WHERE user_id=?").bind(user.id).first();const {results:projects}=await env.DB.prepare("SELECT id,name,kind,status,created_at FROM projects WHERE user_id=? ORDER BY created_at DESC LIMIT 100").bind(user.id).all();return json({user,wallet:{...wallet,unlimited:user.role==="admin"},projects})}
-if(!user)return fail("Please sign in.",401);
-if(path==="/ai/transcribe"&&method==="POST"){
- if(!env.AI)return fail("Speech-to-text is not enabled on this Worker yet.",503);
- let form;
- try{form=await req.formData()}catch{return fail("Upload a WAV audio chunk to transcribe.");}
- const audio=form.get("audio");
- if(!(audio instanceof File)||audio.size<44||audio.size>4*1024*1024)return fail("Audio chunk must be a WAV file between 44 bytes and 4 MB.");
- if(audio.type&&audio.type!=="audio/wav"&&audio.type!=="audio/x-wav")return fail("Only WAV audio chunks are accepted.");
- const language=String(form.get("language")||"").trim().slice(0,12);
- try{
-  const bytes=new Uint8Array(await audio.arrayBuffer());
-  const options={audio:Array.from(bytes),task:"transcribe",condition_on_previous_text:false};
-  if(/^[a-z]{2,3}(-[A-Z]{2})?$/.test(language))options.language=language;
-  const result=await env.AI.run("@cf/openai/whisper-large-v3-turbo",options);
-  const output=result?.result||result||{};
-  if(!output.text&&!output.vtt)return fail("No speech could be detected in this audio chunk.",422);
-  await logUserActivity(env,user.id,"subtitle_transcribed",{bytes:audio.size,language:output.transcription_info?.language||language||"auto"});
-  return json({text:String(output.text||""),vtt:String(output.vtt||""),segments:Array.isArray(output.segments)?output.segments:[],language:output.transcription_info?.language||null,word_count:Number(output.word_count||0)});
- }catch(error){console.error("Whisper transcription failed:",error);return fail("Speech transcription failed. Please retry this audio chunk.",502)}
-}
+ if(method==="POST"&&path==="/auth/login"){
+  const b=await body(req),email=String(b.email||"").trim().toLowerCase(),password=String(b.password||"");
+  if(!email||email.length>254||password.length>128)return fail("Email or password is incorrect.",401);
+  const user=await env.DB.prepare("SELECT id,name,email,password_hash,password_salt,role,status FROM users WHERE email=?").bind(email).first();
+  if(!user||await passwordHash(password,user.password_salt)!==user.password_hash)return fail("Email or password is incorrect.",401);
+  if(user.status!=="active")return fail("This account is suspended. Contact support.",403);
+  const token=await createSession(env,user.id);await logUserActivity(env,user.id,"login",{method:"password"});
+  return json({token,user:{id:user.id,name:user.name,email:user.email,role:user.role}});
+ }
+ const user=await auth(req,env);
+ if(path==="/auth/logout"&&method==="POST"){
+  const token=(req.headers.get("Authorization")||"").replace(/^Bearer\s+/i,"");
+  if(token){
+   await env.DB.prepare("DELETE FROM sessions WHERE token_hash=?").bind(await digest(token)).run();
+   if(user)await logUserActivity(env,user.id,"logout",{});
+  }
+  return json({ok:true});
+ }
 if(path==="/auth/password"&&method==="POST"){
  const b=await body(req),currentPassword=String(b.current_password||""),newPassword=String(b.new_password||"");
  if(newPassword.length<8||newPassword.length>128)return fail("New password must be between 8 and 128 characters.");
