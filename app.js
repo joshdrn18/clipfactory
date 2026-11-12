@@ -1,5 +1,5 @@
 const API_DEFAULT = "https://clipfactory-api.joshdrn18.workers.dev";
-const state = { token: localStorage.getItem("cf_token") || "", user: null, points: 0, projects: [], files: [], packages: [], authMode: "login", adminTab:"overview", ffmpeg:null,subtitleCues:[],subtitleSourceFile:null,subtitleProjectId:null };
+const state = { token: localStorage.getItem("cf_token") || "", user: null, points: 0, projects: [], files: [], packages: [], authMode: "login", adminTab:"overview", ffmpeg:null,subtitleCues:[],subtitleSourceFile:null,subtitleProjectId:null,subtitlePreviewUrl:null };
 const $ = (id) => document.getElementById(id);
 const apiBase = () => localStorage.getItem("cf_api_url") || API_DEFAULT;
 async function api(path, options={}) {
@@ -262,7 +262,27 @@ function renderSubtitleEditor(){
  const cues=state.subtitleCues||[];
  panel.hidden=!cues.length;
  if(!cues.length)return;
- panel.innerHTML='<div class="subtitle-editor-head"><div><strong>Subtitle editor</strong><small>'+cues.length+' timed captions · '+escapeHtml(state.subtitleFileName||"Video")+'</small></div><div class="subtitle-downloads"><button class="btn btn-ghost" id="downloadVtt">Download VTT</button><button class="btn btn-ghost" id="downloadSrt">Download SRT</button></div></div><div class="subtitle-render-settings"><label>Subtitle position<select id="subtitlePosition"><option value="bottom">Bottom</option><option value="center">Center</option><option value="top">Top</option></select></label><label>Text size<select id="subtitleSize"><option value="small">Small</option><option value="medium" selected>Medium</option><option value="large">Large</option></select></label><label>Text color<select id="subtitleColor"><option value="#ffffff">White</option><option value="#ffe45c">Yellow</option><option value="#70e1ff">Cyan</option></select></label><label>Background<select id="subtitleBackground"><option value="outline">Black outline</option><option value="box">Dark box</option><option value="none">No background</option></select></label></div><button class="btn btn-primary subtitle-burn-button" id="burnSubtitles">Burn subtitles into MP4 →</button><small class="subtitle-note">The edited captions and selected appearance will be rendered into a new MP4 and saved to My Videos.</small><div class="subtitle-cue-list">'+cues.map((c,i)=>'<article class="subtitle-cue" data-cue="'+i+'"><div class="subtitle-cue-times"><label>Start (sec)<input type="number" min="0" step="0.05" data-cue-start="'+i+'" value="'+Number(c.start).toFixed(2)+'"></label><label>End (sec)<input type="number" min="0" step="0.05" data-cue-end="'+i+'" value="'+Number(c.end).toFixed(2)+'"></label></div><label class="subtitle-cue-text">Caption<textarea rows="2" data-cue-text="'+i+'">'+escapeHtml(c.text)+'</textarea></label></article>').join("")+'</div>';
+ panel.innerHTML='<div class="subtitle-editor-head"><div><strong>Subtitle editor</strong><small>'+cues.length+' timed captions · '+escapeHtml(state.subtitleFileName||"Video")+'</small></div><div class="subtitle-downloads"><button class="btn btn-ghost" id="downloadVtt">Download VTT</button><button class="btn btn-ghost" id="downloadSrt">Download SRT</button></div></div><div class="subtitle-render-settings"><label>Subtitle position<select id="subtitlePosition"><option value="bottom">Bottom</option><option value="center">Center</option><option value="top">Top</option></select></label><label>Text size<select id="subtitleSize"><option value="small">Small</option><option value="medium" selected>Medium</option><option value="large">Large</option></select></label><label>Text color<select id="subtitleColor"><option value="#ffffff">White</option><option value="#ffe45c">Yellow</option><option value="#70e1ff">Cyan</option></select></label><label>Background<select id="subtitleBackground"><option value="outline">Black outline</option><option value="box">Dark box</option><option value="none">No background</option></select></label></div><div class="subtitle-preview-wrap"><div class="subtitle-preview-heading"><strong>Live preview</strong><small>Play or seek the video to check caption timing</small></div><div class="subtitle-preview-stage"><video id="subtitlePreviewVideo" controls playsinline preload="metadata"></video><canvas id="subtitlePreviewCanvas" aria-hidden="true"></canvas></div></div><button class="btn btn-primary subtitle-burn-button" id="burnSubtitles">Burn subtitles into MP4 →</button><small class="subtitle-note">The edited captions and selected appearance will be rendered into a new MP4 and saved to My Videos.</small><div class="subtitle-cue-list">'+cues.map((c,i)=>'<article class="subtitle-cue" data-cue="'+i+'"><div class="subtitle-cue-times"><label>Start (sec)<input type="number" min="0" step="0.05" data-cue-start="'+i+'" value="'+Number(c.start).toFixed(2)+'"></label><label>End (sec)<input type="number" min="0" step="0.05" data-cue-end="'+i+'" value="'+Number(c.end).toFixed(2)+'"></label></div><label class="subtitle-cue-text">Caption<textarea rows="2" data-cue-text="'+i+'">'+escapeHtml(c.text)+'</textarea></label></article>').join("")+'</div>';
+ if(state.subtitlePreviewUrl)URL.revokeObjectURL(state.subtitlePreviewUrl);
+ state.subtitlePreviewUrl=URL.createObjectURL(state.subtitleSourceFile);
+ const previewVideo=$("subtitlePreviewVideo"),previewCanvas=$("subtitlePreviewCanvas"),previewCtx=previewCanvas.getContext("2d");
+ previewVideo.src=state.subtitlePreviewUrl;
+ const readSettings=()=>({position:$("subtitlePosition").value,size:$("subtitleSize").value,color:$("subtitleColor").value,background:$("subtitleBackground").value});
+ const paintPreview=()=>{
+  if(!previewVideo.videoWidth||!previewVideo.videoHeight)return;
+  const ratio=Math.min(1,1280/Math.max(previewVideo.videoWidth,previewVideo.videoHeight));
+  const width=Math.max(2,Math.round(previewVideo.videoWidth*ratio)),height=Math.max(2,Math.round(previewVideo.videoHeight*ratio));
+  if(previewCanvas.width!==width||previewCanvas.height!==height){previewCanvas.width=width;previewCanvas.height=height}
+  const now=previewVideo.currentTime,cue=state.subtitleCues.find(item=>now>=item.start&&now<=item.end);
+  drawSubtitleFrame(previewCtx,null,width,height,cue,readSettings());
+ };
+ previewVideo.addEventListener("loadedmetadata",paintPreview);
+ previewVideo.addEventListener("timeupdate",paintPreview);
+ previewVideo.addEventListener("seeked",paintPreview);
+ previewVideo.addEventListener("play",paintPreview);
+ ["subtitlePosition","subtitleSize","subtitleColor","subtitleBackground"].forEach(id=>$(id).addEventListener("change",paintPreview));
+ const previewLoop=()=>{if(!panel.isConnected||panel.hidden)return;if(!previewVideo.paused&&!previewVideo.ended)paintPreview();requestAnimationFrame(previewLoop)};
+ requestAnimationFrame(previewLoop);
  $("burnSubtitles").onclick=burnSubtitleExport;
  panel.querySelectorAll("[data-cue-start],[data-cue-end],[data-cue-text]").forEach(el=>el.addEventListener("input",()=>{
   const i=Number(el.dataset.cueStart??el.dataset.cueEnd??el.dataset.cueText),cue=state.subtitleCues[i];if(!cue)return;
@@ -285,7 +305,7 @@ async function transcribeAudio(form,timeoutMs=180000){
  finally{clearTimeout(timer)}
 }
 function drawSubtitleFrame(ctx,video,width,height,cue,settings){
- ctx.drawImage(video,0,0,width,height);
+ if(video)ctx.drawImage(video,0,0,width,height);
  if(!cue||!cue.text)return;
  const scale=width/1080,fontSize=(settings.size==="small"?34:settings.size==="large"?58:44)*scale;
  ctx.save();ctx.font="800 "+fontSize+"px Arial, sans-serif";ctx.textAlign="center";ctx.textBaseline="middle";
@@ -308,7 +328,9 @@ function drawSubtitleFrame(ctx,video,width,height,cue,settings){
 async function recordBurnedSubtitleVideo(file,cues,settings,onProgress){
  const video=document.createElement("video"),url=URL.createObjectURL(file),canvas=document.createElement("canvas"),ctx=canvas.getContext("2d",{alpha:false});
  video.src=url;video.muted=false;video.playsInline=true;video.preload="auto";
- await new Promise((resolve,reject)=>{video.onloadedmetadata=resolve;video.onerror=()=>reject(new Error("The source video could not be opened by this browser."));});
+ const metadataReady=new Promise((resolve,reject)=>{video.onloadedmetadata=resolve;video.onerror=()=>reject(new Error("The source video could not be opened by this browser."));});
+ const playReady=video.play();
+ await metadataReady;
  const ratio=Math.min(1,1920/Math.max(video.videoWidth,video.videoHeight));
  canvas.width=Math.max(2,Math.round(video.videoWidth*ratio/2)*2);canvas.height=Math.max(2,Math.round(video.videoHeight*ratio/2)*2);
  const canvasStream=canvas.captureStream(30),sourceStream=video.captureStream?video.captureStream():video.mozCaptureStream?.();
@@ -332,9 +354,11 @@ async function recordBurnedSubtitleVideo(file,cues,settings,onProgress){
   if(!video.paused&&!video.ended)raf=requestAnimationFrame(paint);
  };
  try{
+  const playbackEnded=new Promise((resolve,reject)=>{video.onended=resolve;video.onerror=()=>reject(new Error("Source playback failed during subtitle rendering."));video.onpause=()=>{if(!video.ended&&recorder.state==="recording")reject(new Error("Video playback paused unexpectedly. Keep the tab active during rendering."))}});
   recorder.start(1000);
+  await playReady;
   paint();
-  await new Promise((resolve,reject)=>{video.onended=resolve;video.onerror=()=>reject(new Error("Source playback failed during subtitle rendering."));video.onpause=()=>{if(!video.ended&&recorder.state==="recording")reject(new Error("Video playback paused unexpectedly. Keep the tab active during rendering."))}});
+  await playbackEnded;
   if(recorder.state==="recording")recorder.stop();
   const blob=await result;
   if(!blob.size)throw new Error("Subtitle render produced an empty video.");
