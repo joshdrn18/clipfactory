@@ -62,6 +62,22 @@ if(path==="/auth/logout"&&method==="POST"){
 }
 if(path==="/me"&&method==="GET"){if(!user)return fail("Please sign in.",401);const wallet=await env.DB.prepare("SELECT balance FROM wallets WHERE user_id=?").bind(user.id).first();const {results:projects}=await env.DB.prepare("SELECT id,name,kind,status,created_at FROM projects WHERE user_id=? ORDER BY created_at DESC LIMIT 100").bind(user.id).all();return json({user,wallet:{...wallet,unlimited:user.role==="admin"},projects})}
 if(!user)return fail("Please sign in.",401);
+if(path==="/auth/password"&&method==="POST"){
+ const b=await body(req),currentPassword=String(b.current_password||""),newPassword=String(b.new_password||"");
+ if(newPassword.length<8||newPassword.length>128)return fail("New password must be between 8 and 128 characters.");
+ const account=await env.DB.prepare("SELECT password_hash,password_salt FROM users WHERE id=?").bind(user.id).first();
+ if(!account||await passwordHash(currentPassword,account.password_salt)!==account.password_hash)return fail("Current password is incorrect.",401);
+ if(currentPassword===newPassword)return fail("Choose a different password.");
+ const salt=hex(crypto.getRandomValues(new Uint8Array(16))),hash=await passwordHash(newPassword,salt);
+ const token=(req.headers.get("Authorization")||"").replace(/^Bearer\\s+/i,"");
+ const tokenHash=await digest(token);
+ await env.DB.batch([
+  env.DB.prepare("UPDATE users SET password_hash=?,password_salt=? WHERE id=?").bind(hash,salt,user.id),
+  env.DB.prepare("DELETE FROM sessions WHERE user_id=? AND token_hash<>?").bind(user.id,tokenHash)
+ ]);
+ await logUserActivity(env,user.id,"password_changed",{sessions_revoked:true});
+ return json({ok:true,message:"Password updated. Other sessions have been signed out."});
+}
 if(path==="/points"&&method==="GET"){const wallet=await env.DB.prepare("SELECT balance FROM wallets WHERE user_id=?").bind(user.id).first();const {results:packages}=await env.DB.prepare("SELECT code,name,points,price_minor,currency FROM point_packages WHERE active=1 ORDER BY sort_order").all();return json({balance:wallet?.balance||0,unlimited:user.role==="admin",packages})}
 if(path==="/points/ledger"&&method==="GET"){const {results:entries}=await env.DB.prepare("SELECT type,amount,balance_after,description,created_at FROM points_ledger WHERE user_id=? ORDER BY created_at DESC LIMIT 100").bind(user.id).all();return json({entries})}
 if(path==="/points/topups"&&method==="POST"){const b=await body(req),pkg=await env.DB.prepare("SELECT * FROM point_packages WHERE code=? AND active=1").bind(String(b.package_code||"")).first();if(!pkg)return fail("That points package is unavailable.");const id=uid(),reference="CF-"+crypto.randomUUID().slice(0,8).toUpperCase();await env.DB.prepare("INSERT INTO topups(id,user_id,package_code,reference,points,amount_minor,currency,note) VALUES(?,?,?,?,?,?,?,?)").bind(id,user.id,pkg.code,reference,pkg.points,pkg.price_minor,pkg.currency,String(b.note||"").slice(0,500)).run();return json({topup:{id,reference,points:pkg.points,amount_minor:pkg.price_minor,currency:pkg.currency,status:"pending"},message:"Pending request created. Points are not credited until payment is verified."},201)}
@@ -313,6 +329,22 @@ if(adminUserDetail&&method==="GET"){
   env.DB.prepare("SELECT action,details,created_at FROM user_activity_logs WHERE user_id=? ORDER BY created_at DESC LIMIT 100").bind(targetId).all().catch(()=>({results:[]}))
  ]);
  return json({account,wallet:wallet||{balance:0},projects:projects.results||[],videos:videos.results||[],ledger:ledger.results||[],ledger_summary:ledgerSummary||{entries:0,spent:0},activity:activity.results||[],user_activity:userActivity.results||[],sessions:sessions||{total:0,last_created_at:null}});
+}
+const adminPassword=path.match(/^\\/admin\\/users\\/([\\w-]+)\\/password$/);
+if(adminPassword&&method==="POST"){
+ const target=await env.DB.prepare("SELECT id,email FROM users WHERE id=?").bind(adminPassword[1]).first();
+ if(!target)return fail("User not found.",404);
+ if(target.id===user.id)return fail("Use Settings to change your own password.",400);
+ const b=await body(req),password=String(b.password||"");
+ if(password.length<8||password.length>128)return fail("Password must be between 8 and 128 characters.");
+ const salt=hex(crypto.getRandomValues(new Uint8Array(16))),hash=await passwordHash(password,salt);
+ await env.DB.batch([
+  env.DB.prepare("UPDATE users SET password_hash=?,password_salt=? WHERE id=?").bind(hash,salt,target.id),
+  env.DB.prepare("DELETE FROM sessions WHERE user_id=?").bind(target.id),
+  env.DB.prepare("INSERT INTO admin_audit_logs(id,admin_user_id,action,target_user_id,details) VALUES(?,?,?,?,?)").bind(uid(),user.id,"user_password_reset",target.id,JSON.stringify({email:target.email,sessions_revoked:true}))
+ ]);
+ await logUserActivity(env,target.id,"password_reset_by_admin",{});
+ return json({ok:true,message:"Password reset and all member sessions revoked."});
 }
 const userAction=path.match(/^\/admin\/users\/([\w-]+)\/(status|points)$/);
 if(userAction&&method==="POST"){
