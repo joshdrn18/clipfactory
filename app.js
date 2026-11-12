@@ -247,6 +247,29 @@ function parseSubtitleVtt(vtt,offset=0){
  }
  return cues;
 }
+function normalizeSubtitleCues(input,duration=Infinity){
+ const output=[];
+ const clean=value=>String(value||"").replace(/<[^>]*>/g," ").replace(/&amp;/gi,"&").replace(/&lt;/gi,"<").replace(/&gt;/gi,">").replace(/&quot;/gi,'"').replace(/&#39;|&apos;/gi,"'").replace(/\s+/g," ").trim();
+ for(const raw of (input||[])){
+  const text=clean(raw.text),start=Math.max(0,Number(raw.start)||0),end=Math.min(duration,Math.max(start+.2,Number(raw.end)||start+.2));
+  if(!text||end<=start)continue;
+  const words=text.split(" "),parts=[];let line="";
+  for(const word of words){
+   const candidate=line?line+" "+word:word;
+   if(line&&(candidate.length>38||line.split(" ").length>=7)){parts.push(line);line=word}else line=candidate;
+  }
+  if(line)parts.push(line);
+  const weights=parts.map(part=>Math.max(1,part.split(" ").length)),total=weights.reduce((a,b)=>a+b,0),span=end-start;
+  let cursor=start;
+  parts.forEach((part,index)=>{
+   const partEnd=index===parts.length-1?end:cursor+span*weights[index]/total;
+   output.push({start:cursor,end:Math.max(cursor+.12,partEnd),text:part});
+   cursor=partEnd;
+  });
+ }
+ output.sort((a,b)=>a.start-b.start);
+ return output.filter((cue,index)=>cue.end>cue.start&&(!index||cue.start>=output[index-1].start));
+}
 function formatVttTime(seconds){
  const ms=Math.max(0,Math.round(Number(seconds||0)*1000)),h=Math.floor(ms/3600000),m=Math.floor(ms%3600000/60000),s=Math.floor(ms%60000/1000),r=ms%1000;
  return String(h).padStart(2,"0")+":"+String(m).padStart(2,"0")+":"+String(s).padStart(2,"0")+"."+String(r).padStart(3,"0");
@@ -314,13 +337,15 @@ async function transcribeAudio(form,timeoutMs=180000){
 function drawSubtitleFrame(ctx,video,width,height,cue,settings){
  if(video)ctx.drawImage(video,0,0,width,height);
  if(!cue||!cue.text)return;
- const scale=width/1080,fontSize=(settings.size==="small"?34:settings.size==="large"?58:44)*scale;
+ let fontSize=(settings.size==="small"?34:settings.size==="large"?58:44)*(width/1080);
  ctx.save();ctx.font="800 "+fontSize+"px Arial, sans-serif";ctx.textAlign="center";ctx.textBaseline="middle";
  const maxWidth=width*.88,words=String(cue.text).replace(/<[^>]*>/g,"").split(/\s+/),lines=[];let line="";
  for(const word of words){const test=line?line+" "+word:word;if(ctx.measureText(test).width>maxWidth&&line){lines.push(line);line=word}else line=test}
  if(line)lines.push(line);
+ while(lines.length>2&&fontSize>18){fontSize*=.9;ctx.font="800 "+fontSize+"px Arial, sans-serif";lines.length=0;line="";for(const word of words){const test=line?line+" "+word:word;if(ctx.measureText(test).width>maxWidth&&line){lines.push(line);line=word}else line=test}if(line)lines.push(line)}
+ if(lines.length>2){const last=lines.slice(1).join(" ");lines.splice(1,lines.length-1,last)}
  const lineHeight=fontSize*1.2,pad=fontSize*.34,totalHeight=lines.length*lineHeight;
- let centerY=settings.position==="top"?height*.13+totalHeight/2:settings.position==="center"?height*.5:height*.86-totalHeight/2;
+ let centerY=settings.position==="top"?height*.16+totalHeight/2:settings.position==="center"?height*.5:height*.82-totalHeight/2;
  const color=settings.color;
  if(settings.background==="box"){
   const maxLine=Math.max(...lines.map(x=>ctx.measureText(x).width));
@@ -442,11 +467,11 @@ async function createSubtitleBatch(files){
    try{await ffmpeg.deleteFile(audioName)}catch(e){}temporary.delete(audioName);
    if(ffmpeg.__lastProgressAt)ffmpeg.__lastProgressAt=Date.now();
   }
-  state.subtitleCues=cues.sort((x,y)=>x.start-y.start);
+  state.subtitleCues=normalizeSubtitleCues(cues,duration);
   state.subtitleFileName=file.name;
-  if(!cues.length)throw new Error("No speech was detected. Check that the video contains audible dialogue.");
+  if(!state.subtitleCues.length)throw new Error("No speech was detected. Check that the video contains audible dialogue.");
   engineProgress("Subtitles ready",100,false,"Review the transcript and adjust each caption's wording or timing below.");
-  renderSubtitleEditor();toast("Generated "+cues.length+" editable subtitle cues.");
+  renderSubtitleEditor();toast("Generated "+state.subtitleCues.length+" readable subtitle cues.");
  }catch(error){
   engineProgress("Subtitle generation failed",engineProgressValue,false,error.message||"Please retry.");
   toast(error.message||"Subtitle generation failed.");
