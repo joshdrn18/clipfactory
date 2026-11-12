@@ -271,32 +271,7 @@ $("createBatch").onclick=async()=>{
    }
   }
   if(results.length){
-   await api("/projects/"+encodeURIComponent(project.id)+"/complete",{method:"POST",body:"{}"});
-   project.status="completed";
-  }
-  state.files=failedFiles.map(x=>x.file);
-  $("fileInput").value="";
-  renderSelectedFiles();
-  $("recentProjects").innerHTML=state.projects.slice(0,4).map(projectRow).join("");
-  renderProjects();
-  const failedSummary=failedFiles.length?" · "+failedFiles.length+" file(s) failed and remain selected for retry":"";
-  $("engineStatus").textContent=results.length
-   ?"Completed · "+results.length+" export(s) saved"+failedSummary
-   :"No exports saved · all "+failedFiles.length+" file(s) failed";
-  $("enginePercent").textContent=results.length?"100%":"0%";
-  $("engineProgressBar").style.width=results.length?"100%":"0%";
-  $("engineResults").innerHTML=(results.length?'<h3>Ready to download</h3>'+results.map(x=>'<div class="engine-result"><span>'+escapeHtml(x.file_name)+' <small>· '+(x.size_bytes/1048576).toFixed(1)+' MB</small></span><button class="admin-action" data-download="'+x.id+'" data-name="'+escapeHtml(x.file_name)+'">Download</button></div>':'')+
-   (failedFiles.length?'<div class="notice"><strong>'+failedFiles.length+' file(s) need attention</strong>'+failedFiles.map(x=>'<p>'+escapeHtml(x.file.name)+': '+escapeHtml(x.message)+'</p>').join("")+'Failed files are still selected above. Remove them or retry the batch; exports already saved remain in My Videos.</div>':'');
-  if(results.length&&failedFiles.length)toast(results.length+" export(s) saved. "+failedFiles.length+" file(s) failed and remain selected.");
-  else if(results.length)toast("Video processing complete!");
-  else toast("All files failed. Your selection is kept so you can retry.");
-  await api("/projects/"+encodeURIComponent(project.id)+"/complete",{method:"POST",body:"{}"});project.status="completed";
-  state.files=[];$("fileInput").value="";renderSelectedFiles();$("createBatch").disabled=true;
-  $("recentProjects").innerHTML=state.projects.slice(0,4).map(projectRow).join("");renderProjects();
-  $("engineStatus").textContent="Completed · "+results.length+" export(s) saved";$("enginePercent").textContent="100%";$("engineProgressBar").style.width="100%";
-  $("engineResults").innerHTML='<h3>Ready to download</h3>'+results.map(x=>'<div class="engine-result"><span>'+escapeHtml(x.file_name)+' <small>· '+(x.size_bytes/1048576).toFixed(1)+' MB</small></span><button class="admin-action" data-download="'+x.id+'" data-name="'+escapeHtml(x.file_name)+'">Download</button></div>').join("");
-  toast("Video processing complete!");
- }catch(e){
+  }catch(e){
   console.error("ClipFactory processing failed:",e);
   const detail = e instanceof Error ? (e.stack || e.message) : (typeof e === "string" ? e : JSON.stringify(e) || String(e));
   const message = e?.message || (typeof e === "string" ? e : "Unknown processing error");
