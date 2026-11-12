@@ -273,6 +273,16 @@ function renderSubtitleEditor(){
  $("downloadVtt").onclick=()=>download(subtitleVtt(),(state.subtitleFileName||"captions").replace(/\.[^.]+$/,"")+".vtt","text/vtt;charset=utf-8");
  $("downloadSrt").onclick=()=>download(subtitleSrt(),(state.subtitleFileName||"captions").replace(/\.[^.]+$/,"")+".srt","application/x-subrip;charset=utf-8");
 }
+async function transcribeAudio(form,timeoutMs=180000){
+ const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),timeoutMs);
+ try{
+  const response=await fetch("https://clipfactory-transcribe.joshdrn18.workers.dev/transcribe",{method:"POST",headers:{Authorization:"Bearer "+state.token},body:form,signal:controller.signal});
+  const data=await response.json().catch(()=>({error:"Invalid transcription response"}));
+  if(!response.ok)throw new Error(data.error||"Speech recognition failed.");
+  return data;
+ }catch(error){if(controller.signal.aborted)throw new Error("Speech recognition timed out. Retry this audio segment.");throw error}
+ finally{clearTimeout(timer)}
+}
 async function createSubtitleBatch(files){
  if(files.length!==1){toast("For subtitle editing, select one video at a time.");return}
  if(!$("createBatch").disabled)$("createBatch").disabled=true;
@@ -301,7 +311,7 @@ async function createSubtitleBatch(files){
    if(audioBytes.byteLength>4*1024*1024)throw new Error("Audio segment is too large. Try a shorter source video.");
    const form=new FormData();form.append("audio",new Blob([audioBytes],{type:"audio/wav"}),"audio.wav");
    engineProgress("Transcribing audio "+(index+1)+"/"+total+"…",10+(index+1)/total*80,false,"Whisper is detecting speech and generating caption timestamps.");
-   const result=await api("/ai/transcribe",{method:"POST",body:form,timeoutMs:180000});
+   const result=await transcribeAudio(form,180000);
    const parsed=parseSubtitleVtt(result.vtt,offset);
    if(parsed.length)cues.push(...parsed);
    else if(result.text)cues.push({start:offset,end:Math.min(duration,offset+span),text:result.text});
