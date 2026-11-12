@@ -250,6 +250,31 @@ function parseSubtitleVtt(vtt,offset=0){
 function cleanSubtitleText(value){
  return String(value||"").replace(/<[^>]*>/g," ").replace(/\\N/g," ").replace(/&nbsp;/gi," ").replace(/&amp;/gi,"&").replace(/&quot;/gi,'"').replace(/&#39;|&apos;/gi,"'").replace(/&lt;/gi,"<").replace(/&gt;/gi,">").replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g," ").replace(/\s+/g," ").trim();
 }
+function splitSubtitlePhrases(value,maxChars=38,maxWords=7){
+ const words=cleanSubtitleText(value).split(/\\s+/).filter(Boolean),parts=[];
+ let line=[],length=0;
+ for(let index=0;index<words.length;index++){
+  const word=words[index],candidateLength=length+(line.length?1:0)+word.length;
+  if(line.length&&(candidateLength>maxChars||line.length>=maxWords)){
+   // Prefer a natural clause boundary (comma, semicolon, colon, or sentence end)
+   // within the current line instead of cutting at an arbitrary word.
+   let boundary=-1;
+   for(let j=line.length-1;j>=Math.max(1,line.length-3);j--){
+    if(/[,.!?;:]$/.test(line[j])){boundary=j;break;}
+   }
+   if(boundary>0){
+    parts.push(line.slice(0,boundary+1).join(" "));
+    const carry=line.slice(boundary+1);line=carry;length=carry.join(" ").length;
+   }else{parts.push(line.join(" "));line=[];length=0;}
+  }
+  line.push(word);length=line.join(" ").length;
+  if(/[.!?]$/.test(word)&&line.length>=3&&index<words.length-1){
+   parts.push(line.join(" "));line=[];length=0;
+  }
+ }
+ if(line.length)parts.push(line.join(" "));
+ return parts.length?parts:[cleanSubtitleText(value)];
+}
 function normalizeSubtitleCues(input,duration=Infinity){
  const output=[];
  for(const raw of (input||[])){
@@ -258,15 +283,10 @@ function normalizeSubtitleCues(input,duration=Infinity){
   const rawEnd=Number(raw.end);
   const end=Math.min(duration,Math.max(start+.2,Number.isFinite(rawEnd)?rawEnd:start+.2));
   if(!text||!Number.isFinite(start)||!Number.isFinite(end)||end<=start)continue;
-  const words=text.split(" "),parts=[];let line="";
-  for(const word of words){
-   const candidate=line?line+" "+word:word;
-   if(line&&(candidate.length>38||line.split(" ").length>=7)){parts.push(line);line=word}else line=candidate;
-  }
-  if(line)parts.push(line);
+  // Each Whisper segment is kept as its own timing island. Its start/end carries
+  // the model's speech-pause information, so phrases never spill across a pause.
+  const parts=splitSubtitlePhrases(text);
   const span=end-start;
-  // Keep short utterances together. Splitting a short timestamp window creates
-  // unreadably brief captions and makes the text appear to flicker.
   if(parts.length>1&&span/parts.length<.45){parts.length=0;parts.push(text);}
   const weights=parts.map(part=>Math.max(1,part.split(" ").length)),total=weights.reduce((a,b)=>a+b,0);
   const minimum=parts.length>1?.45:0;
@@ -371,6 +391,14 @@ function renderSubtitleEditor(){
  const download=(content,name,type)=>{const blob=new Blob([content],{type}),url=URL.createObjectURL(blob),link=document.createElement("a");link.href=url;link.download=name;link.click();setTimeout(()=>URL.revokeObjectURL(url),1000)};
  $("downloadVtt").onclick=()=>download(subtitleVtt(),(state.subtitleFileName||"captions").replace(/\.[^.]+$/,"")+".vtt","text/vtt;charset=utf-8");
  $("downloadSrt").onclick=()=>download(subtitleSrt(),(state.subtitleFileName||"captions").replace(/\.[^.]+$/,"")+".srt","application/x-subrip;charset=utf-8");
+}
+function parseWhisperSegments(segments,offset=0){
+ if(!Array.isArray(segments))return [];
+ return segments.map(segment=>{
+  const start=Number(segment?.start),end=Number(segment?.end),text=cleanSubtitleText(segment?.text||segment?.transcription||"");
+  if(!text||!Number.isFinite(start)||!Number.isFinite(end)||end<=start)return null;
+  return {start:start+offset,end:end+offset,text};
+ }).filter(Boolean);
 }
 async function transcribeAudio(form,timeoutMs=180000){
  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),timeoutMs);
@@ -707,7 +735,10 @@ async function discoverVideoHighlights(ffmpeg,input,duration,clipSeconds,onProgr
    silenceRanges.push(...measureSilenceRanges(bytes,offset,span));
    const form=new FormData();form.append("audio",new Blob([bytes],{type:"audio/wav"}),"audio.wav");
    const result=await transcribeAudio(form,180000);
-   const parsed=parseSubtitleVtt(result.vtt,offset);
+   // Prefer timestamped Whisper segments: their boundaries retain natural
+   // pauses better than the flattened VTT fallback.
+   const segmented=parseWhisperSegments(result.segments,offset);
+   const parsed=segmented.length?segmented:parseSubtitleVtt(result.vtt,offset);
    if(parsed.length)cues.push(...parsed);
    else if(result.text)cues.push({start:offset,end:Math.min(duration,offset+span),text:result.text});
    try{await ffmpeg.deleteFile(audioName)}catch(e){}
