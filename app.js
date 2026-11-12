@@ -286,7 +286,7 @@ async function transcribeAudio(form,timeoutMs=180000){
 async function createSubtitleBatch(files){
  if(files.length!==1){toast("For subtitle editing, select one video at a time.");return}
  if(!$("createBatch").disabled)$("createBatch").disabled=true;
- $("engineResults").innerHTML="";$("subtitleEditor").hidden=true;
+ $("engineResults").innerHTML="";$("subtitleEditor").hidden=true;state.subtitleCues=[];
  let ffmpeg=null,input="",audioName="";
  const temporary=new Set();
  try{
