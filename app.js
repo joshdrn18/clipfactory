@@ -381,53 +381,81 @@ function drawSubtitleFrame(ctx,video,width,height,cue,settings){
  ctx.restore();
 }
 async function recordBurnedSubtitleVideo(file,cues,settings,onProgress){
- const video=document.createElement("video"),url=URL.createObjectURL(file),canvas=document.createElement("canvas"),ctx=canvas.getContext("2d",{alpha:false});
- video.src=url;video.muted=false;video.volume=1;video.playsInline=true;video.preload="auto";
- const metadataReady=new Promise((resolve,reject)=>{video.onloadedmetadata=resolve;video.onerror=()=>reject(new Error("The source video could not be opened by this browser."));});
- await metadataReady;
- const ratio=Math.min(1,1920/Math.max(video.videoWidth,video.videoHeight));
- canvas.width=Math.max(2,Math.round(video.videoWidth*ratio/2)*2);canvas.height=Math.max(2,Math.round(video.videoHeight*ratio/2)*2);
- const canvasStream=canvas.captureStream(30),sourceStream=video.captureStream?video.captureStream():video.mozCaptureStream?.();
- if(!sourceStream)throw new Error("This browser cannot capture the source video's audio. Use the latest Chrome or Edge.");
- sourceStream.getAudioTracks().forEach(track=>canvasStream.addTrack(track));
- const mime=["video/webm;codecs=vp9,opus","video/webm;codecs=vp8,opus","video/webm"].find(type=>MediaRecorder.isTypeSupported(type));
- if(!mime)throw new Error("Media recording is not supported by this browser.");
- const recorder=new MediaRecorder(canvasStream,{mimeType:mime,videoBitsPerSecond:Math.min(8000000,Math.max(2500000,canvas.width*canvas.height*3))});
- const chunks=[];
- const stopTracks=()=>{canvasStream.getTracks().forEach(t=>t.stop());sourceStream.getTracks().forEach(t=>t.stop());URL.revokeObjectURL(url)};
- const result=new Promise((resolve,reject)=>{
-  recorder.ondataavailable=e=>{if(e.data?.size)chunks.push(e.data)};
-  recorder.onerror=()=>reject(new Error("Browser recording failed while burning subtitles."));
-  recorder.onstop=()=>resolve(new Blob(chunks,{type:mime}));
- });
- let raf=0,videoFrame=0;
- const schedulePaint=()=>{
-  if(video.requestVideoFrameCallback)videoFrame=video.requestVideoFrameCallback(()=>paint());
-  else raf=requestAnimationFrame(paint);
+ const video=document.createElement("video"),url=URL.createObjectURL(file),canvas=document.createElement("canvas");
+ let canvasStream=null,sourceStream=null,recorder=null,raf=0,videoFrame=0,playbackTimer=0;
+ const ctx=canvas.getContext("2d",{alpha:false});
+ if(!ctx){URL.revokeObjectURL(url);throw new Error("This browser could not create a video render canvas.")}
+ const stopTracks=()=>{
+  if(canvasStream)canvasStream.getTracks().forEach(track=>track.stop());
+  if(sourceStream)sourceStream.getTracks().forEach(track=>track.stop());
+  if(videoFrame&&video.cancelVideoFrameCallback)video.cancelVideoFrameCallback(videoFrame);
+  if(raf)cancelAnimationFrame(raf);
+  if(playbackTimer)clearTimeout(playbackTimer);
+  video.pause();video.removeAttribute("src");video.load();URL.revokeObjectURL(url);
  };
- const paint=()=>{
-  const now=video.currentTime,cue=cues.find(c=>now>=c.start&&now<=c.end);
-  drawSubtitleFrame(ctx,video,canvas.width,canvas.height,cue,settings);
-  onProgress?.(Math.min(92,video.duration?now/video.duration*92:0),now,video.duration);
-  if(!video.paused&&!video.ended)schedulePaint();
+ const waitFor=(target,event,timeoutMs,message)=>{
+  if(event==="loadedmetadata"&&target.readyState>=1)return Promise.resolve();
+  if(event==="canplay"&&target.readyState>=3)return Promise.resolve();
+  return new Promise((resolve,reject)=>{
+   const timer=setTimeout(()=>{cleanup();reject(new Error(message))},timeoutMs);
+   const cleanup=()=>{clearTimeout(timer);target.removeEventListener(event,done);target.removeEventListener("error",failed)};
+   const done=()=>{cleanup();resolve()};
+   const failed=()=>{cleanup();reject(new Error(message))};
+   target.addEventListener(event,done,{once:true});target.addEventListener("error",failed,{once:true});
+  });
  };
  try{
-  const playbackEnded=new Promise((resolve,reject)=>{video.onended=resolve;video.onerror=()=>reject(new Error("Source playback failed during subtitle rendering."));video.onpause=()=>{if(!video.ended&&recorder.state==="recording")reject(new Error("Video playback paused unexpectedly. Keep the tab active during rendering."))}});
-  await new Promise(resolve=>{if(video.readyState>=2)return resolve();video.oncanplay=resolve});
-  video.currentTime=0;
-  await new Promise(resolve=>{if(video.currentTime===0)return resolve();video.onseeked=resolve});
+  video.src=url;video.muted=false;video.volume=1;video.playsInline=true;video.preload="auto";video.load();
+  await waitFor(video,"loadedmetadata",60000,"The source video metadata could not be loaded. Try re-exporting it as MP4.");
+  if(!video.videoWidth||!video.videoHeight||!Number.isFinite(video.duration))throw new Error("The source video has invalid dimensions or duration.");
+  const ratio=Math.min(1,1920/Math.max(video.videoWidth,video.videoHeight));
+  canvas.width=Math.max(2,Math.round(video.videoWidth*ratio/2)*2);
+  canvas.height=Math.max(2,Math.round(video.videoHeight*ratio/2)*2);
+  canvasStream=canvas.captureStream(30);
+  sourceStream=video.captureStream?video.captureStream():video.mozCaptureStream?.();
+  if(!sourceStream)throw new Error("This browser cannot capture the source video. Use the latest Chrome or Edge.");
+  sourceStream.getAudioTracks().forEach(track=>canvasStream.addTrack(track));
+  if(typeof MediaRecorder==="undefined"||typeof MediaRecorder.isTypeSupported!=="function")throw new Error("This browser does not support video recording. Use the latest Chrome or Edge.");
+  const mime=["video/webm;codecs=vp9,opus","video/webm;codecs=vp8,opus","video/webm"].find(type=>MediaRecorder.isTypeSupported(type));
+  if(!mime)throw new Error("No supported browser recording format was found.");
+  recorder=new MediaRecorder(canvasStream,{mimeType:mime,videoBitsPerSecond:Math.min(8000000,Math.max(2500000,canvas.width*canvas.height*3))});
+  const chunks=[];
+  let rejectRecording;
+  const recordingFailure=new Promise((_,reject)=>{rejectRecording=reject});
+  const result=new Promise((resolve,reject)=>{
+   recorder.ondataavailable=event=>{if(event.data?.size)chunks.push(event.data)};
+   recorder.onerror=()=>{const error=new Error("Browser recording failed while burning subtitles.");reject(error);rejectRecording(error)};
+   recorder.onstop=()=>resolve(new Blob(chunks,{type:mime}));
+  });
+  const paint=()=>{
+   videoFrame=0;raf=0;
+   const now=video.currentTime,cue=cues.find(item=>now>=item.start&&now<item.end);
+   drawSubtitleFrame(ctx,video,canvas.width,canvas.height,cue,settings);
+   onProgress?.(Math.min(92,video.duration?now/video.duration*92:0),now,video.duration);
+   if(!video.paused&&!video.ended){
+    if(video.requestVideoFrameCallback)videoFrame=video.requestVideoFrameCallback(paint);
+    else raf=requestAnimationFrame(paint);
+   }
+  };
+  await waitFor(video,"canplay",60000,"The source video could not start decoding. Try another MP4 export.");
+  if(video.currentTime!==0){video.currentTime=0;await waitFor(video,"seeked",15000,"Could not seek to the beginning of the source video.");}
+  const playbackEnded=new Promise((resolve,reject)=>{
+   video.addEventListener("ended",resolve,{once:true});
+   video.addEventListener("pause",()=>{if(!video.ended&&recorder.state==="recording")reject(new Error("Video playback paused unexpectedly. Keep this tab active and do not pause during rendering."))});
+   playbackTimer=setTimeout(()=>reject(new Error("Subtitle rendering exceeded the expected playback time. Keep the tab active and retry.")),Math.max(120000,video.duration*1000+120000));
+  });
   recorder.start(1000);
   await video.play();
-  // Start the animation loop only after playback is active; otherwise the paused
-  // state prevents requestAnimationFrame from scheduling the next video frame.
   paint();
-  await playbackEnded;
+  await Promise.race([playbackEnded,recordingFailure]);
   if(recorder.state==="recording")recorder.stop();
   const blob=await result;
-  if(!blob.size)throw new Error("Subtitle render produced an empty video.");
+  if(!blob.size)throw new Error("Subtitle render produced an empty recording.");
   return blob;
- }catch(error){if(recorder.state==="recording")recorder.stop();throw error}
- finally{cancelAnimationFrame(raf);if(videoFrame&&video.cancelVideoFrameCallback)video.cancelVideoFrameCallback(videoFrame);video.pause();stopTracks()}
+ }catch(error){
+  if(recorder&&recorder.state==="recording"){try{recorder.stop()}catch(e){}}
+  throw error;
+ }finally{stopTracks()}
 }
 async function burnSubtitleExport(){
  const file=state.subtitleSourceFile,cues=state.subtitleCues||[];
