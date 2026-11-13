@@ -215,9 +215,25 @@ async function execFFmpegWithTimeout(ffmpeg,args,timeoutMs=30*60*1000,stallTimeo
  }finally{clearTimeout(timer);clearInterval(watchdog)}
 }
 async function uploadMedia(file,projectId,kind,forceBackup=false,onProgress){
-  const init=await api("/media/upload/init",{method:"POST",timeoutMs:60000,body:JSON.stringify({file_name:file.name,file_size:file.size,content_type:file.type,project_id:projectId,kind,force_backup:forceBackup})});
+  const uploadId=crypto.randomUUID();
+  let init=null;
   const parts=[],chunkSize=8*1024*1024,totalParts=Math.ceil(file.size/chunkSize);
   try{
+   let initError;
+   for(let attempt=1;attempt<=3;attempt++){
+    try{
+     init=await api("/media/upload/init",{method:"POST",timeoutMs:90000,body:JSON.stringify({client_upload_id:uploadId,file_name:file.name,file_size:file.size,content_type:file.type,project_id:projectId,kind,force_backup:forceBackup})});
+     initError=null;break;
+    }catch(error){
+     initError=error;
+     const message=String(error?.message||error);
+     const transient=error instanceof TypeError||/failed to fetch|network|timed out|timeout|internal server error|502|503|504/i.test(message);
+     if(!transient||attempt===3)break;
+     engineProgress("Connection interrupted · retrying upload setup ("+attempt+"/2)",5,false,"The same upload session ID is reused, preventing duplicate sessions.");
+     await new Promise(resolve=>setTimeout(resolve,1000*attempt));
+    }
+   }
+   if(initError)throw new Error("Could not start upload after 3 attempts: "+(initError.message||"Network connection interrupted"));
    for(let partNumber=1;partNumber<=totalParts;partNumber++){
     const start=(partNumber-1)*chunkSize,end=Math.min(file.size,start+chunkSize);
     const chunk=file.slice(start,end);
@@ -225,7 +241,7 @@ async function uploadMedia(file,projectId,kind,forceBackup=false,onProgress){
     let part,lastPartError;
     for(let attempt=1;attempt<=3;attempt++){
      try{
-      part=await api("/media/upload/"+init.upload_id+"/part?partNumber="+partNumber,{method:"PUT",timeoutMs:180000,body:chunk,headers:{"Content-Type":"application/octet-stream"}});
+      part=await api("/media/upload/"+uploadId+"/part?partNumber="+partNumber,{method:"PUT",timeoutMs:180000,body:chunk,headers:{"Content-Type":"application/octet-stream"}});
       lastPartError=null;break;
      }catch(partError){
       lastPartError=partError;
@@ -241,7 +257,7 @@ async function uploadMedia(file,projectId,kind,forceBackup=false,onProgress){
    }
    let completed;
    try{
-    completed=await api("/media/upload/"+init.upload_id+"/complete",{method:"POST",timeoutMs:90000,body:JSON.stringify({parts})});
+    completed=await api("/media/upload/"+uploadId+"/complete",{method:"POST",timeoutMs:90000,body:JSON.stringify({parts})});
    }catch(completeError){
     const listing=await api("/media?project_id="+encodeURIComponent(projectId));
     const recovered=(listing.assets||[]).find(asset=>asset.kind===kind&&asset.file_name===file.name&&Number(asset.size_bytes)===file.size);
@@ -252,9 +268,9 @@ async function uploadMedia(file,projectId,kind,forceBackup=false,onProgress){
    if(kind==="source"&&state.user?.role!=="admin"&&completed.balance!==null&&completed.balance!==undefined)updatePoints(completed.balance,false);
    return completed;
   }catch(error){
-   await api("/media/upload/"+init.upload_id+"/cancel",{method:"POST",timeoutMs:20000,body:"{}"}).catch(()=>{});
+   await api("/media/upload/"+uploadId+"/cancel",{method:"POST",timeoutMs:20000,body:"{}"}).catch(()=>{});
    await refresh().catch(()=>{});
-   if(!forceBackup&&init.storage==="primary"){
+   if(!forceBackup&&(!init||init.storage==="primary")){
     engineProgress("Primary storage unavailable. Retrying on backup storage…",5,false);
     return uploadMedia(file,projectId,kind,true,onProgress);
    }
