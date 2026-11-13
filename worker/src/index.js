@@ -122,12 +122,19 @@ if(path==="/media/upload/init"&&method==="POST"){
  if(!/^video\/(mp4|quicktime|webm|x-matroska)$/.test(contentType))return fail("Unsupported video format.");
  const project=await env.DB.prepare("SELECT id FROM projects WHERE id=? AND user_id=?").bind(projectId,user.id).first();
  if(!project)return fail("Project not found.",404);
+ const clientUploadId=String(b.client_upload_id||"");
+ const id=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(clientUploadId)?clientUploadId:uid();
+ const existing=await env.DB.prepare("SELECT id,project_id,kind,file_name,object_key,size_bytes,content_type,points_charged FROM media_uploads WHERE id=? AND user_id=?").bind(id,user.id).first();
+ if(existing){
+  if(existing.project_id!==projectId||existing.kind!==kind||existing.file_name!==fileName||Number(existing.size_bytes)!==size||existing.content_type!==contentType)return fail("Upload session ID is already in use for a different file.",409);
+  return json({upload_id:existing.id,points_cost:existing.points_charged,unlimited:user.role==="admin",storage:isBackupKey(existing.object_key)?"backup":"primary"},201);
+ }
  const pointsCost=kind==="source"&&user.role!=="admin"?Math.ceil(size/(100*1024*1024))*10:0;
  if(pointsCost>0){
   const wallet=await env.DB.prepare("SELECT balance FROM wallets WHERE user_id=?").bind(user.id).first();
   if((wallet?.balance||0)<pointsCost)return fail("Not enough points. This upload requires "+pointsCost+" points.",402);
  }
- const id=uid(),baseKey=user.id+"/"+projectId+"/"+id+"-"+fileName;
+ const baseKey=user.id+"/"+projectId+"/"+id+"-"+fileName;
  let key=baseKey,multipart;
  const usage=await env.DB.prepare("SELECT COALESCE(SUM(size_bytes),0) AS bytes FROM media_assets WHERE object_key NOT LIKE 'backup/%'").first().catch(()=>({bytes:0}));
  const canBackup=!!(env.BACKUP_URL&&env.BACKUP_TOKEN),preferBackup=b.force_backup===true||Number(usage?.bytes||0)>=9.5*1024*1024*1024;
