@@ -214,6 +214,7 @@ async function execFFmpegWithTimeout(ffmpeg,args,timeoutMs=30*60*1000,stallTimeo
   ]);
  }finally{clearTimeout(timer);clearInterval(watchdog)}
 }
+// Retry setup and chunk uploads as one storage operation; reuse the session ID for safe retries.
 async function uploadMedia(file,projectId,kind,forceBackup=false,onProgress){
   const uploadId=crypto.randomUUID();
   let init=null;
