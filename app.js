@@ -270,7 +270,8 @@ async function uploadMedia(file,projectId,kind,forceBackup=false,onProgress){
   }catch(error){
    await api("/media/upload/"+uploadId+"/cancel",{method:"POST",timeoutMs:20000,body:"{}"}).catch(()=>{});
    await refresh().catch(()=>{});
-   const message=String(error?.message||error);\n   const transientInitFailure=!init&&(error instanceof TypeError||/failed to fetch|network|timed out|timeout|internal server error|502|503|504/i.test(message));\n   if(!forceBackup&&(transientInitFailure||init?.storage==="primary")){
+   const message=String(error?.message||error);
+   const transientInitFailure=!init&&(error instanceof TypeError||/failed to fetch|network|timed out|timeout|internal server error|502|503|504/i.test(message));\n   if(!forceBackup&&(transientInitFailure||init?.storage==="primary")){
     engineProgress("Primary storage unavailable. Retrying on backup storage…",5,false);
     return uploadMedia(file,projectId,kind,true,onProgress);
    }
