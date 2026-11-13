@@ -233,7 +233,7 @@ async function uploadMedia(file,projectId,kind,forceBackup=false,onProgress){
      await new Promise(resolve=>setTimeout(resolve,1000*attempt));
     }
    }
-   if(initError)throw new Error("Could not start upload after 3 attempts: "+(initError.message||"Network connection interrupted"));
+   if(initError)throw new Error("Could not start upload: "+(initError.message||"Network connection interrupted"));
    for(let partNumber=1;partNumber<=totalParts;partNumber++){
     const start=(partNumber-1)*chunkSize,end=Math.min(file.size,start+chunkSize);
     const chunk=file.slice(start,end);
@@ -270,7 +270,7 @@ async function uploadMedia(file,projectId,kind,forceBackup=false,onProgress){
   }catch(error){
    await api("/media/upload/"+uploadId+"/cancel",{method:"POST",timeoutMs:20000,body:"{}"}).catch(()=>{});
    await refresh().catch(()=>{});
-   if(!forceBackup&&(!init||init.storage==="primary")){
+   const message=String(error?.message||error);\n   const transientInitFailure=!init&&(error instanceof TypeError||/failed to fetch|network|timed out|timeout|internal server error|502|503|504/i.test(message));\n   if(!forceBackup&&(transientInitFailure||init?.storage==="primary")){
     engineProgress("Primary storage unavailable. Retrying on backup storage…",5,false);
     return uploadMedia(file,projectId,kind,true,onProgress);
    }
