@@ -27,7 +27,7 @@ The 9:16 resize workflow uses a blurred, cropped background with the full source
 
 ## Storage and upload
 
-- Multipart uploads use 16 MB chunks.
+- Multipart uploads use 8 MiB chunks.
 - The API accepts individual video uploads up to 500 MB.
 - Source uploads are charged at 10 points per 100 MB, rounded up; admin uploads are free.
 - The API can route objects to the secondary R2 bucket when primary storage is near its configured threshold or when primary upload initialization fails.
