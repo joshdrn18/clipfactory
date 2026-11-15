@@ -192,3 +192,90 @@
 .cf-diagnostics{margin-top:12px;border-top:1px solid var(--border,rgba(255,255,255,.08))}
 .cf-diagnostics .admin-row{padding:9px 0;border-bottom:1px solid var(--border,rgba(255,255,255,.08))}
 .cf-diagnostics .admin-row:last-child{border-bottom:0}
+
+
+/* Cloudflare Workers AI quota dashboard */
+.cf-quota-dashboard{display:grid;gap:16px;min-width:0}
+.cf-quota-hero{position:relative;isolation:isolate;overflow:hidden;padding:22px 24px 17px;border:1px solid rgba(145,126,255,.24);border-radius:20px;background:radial-gradient(ellipse at 88% 0%,rgba(86,211,202,.13),transparent 34%),radial-gradient(ellipse at 64% 115%,rgba(133,101,255,.2),transparent 44%),linear-gradient(128deg,#17182b 0%,#121827 58%,#111d26 100%);box-shadow:0 16px 40px rgba(0,0,0,.14)}
+.cf-quota-hero:after{content:"";position:absolute;z-index:-1;width:280px;height:280px;right:8%;top:-205px;border:1px solid rgba(190,177,255,.16);border-radius:50%;box-shadow:0 0 0 28px rgba(190,177,255,.025),0 0 0 58px rgba(190,177,255,.018),0 0 0 90px rgba(190,177,255,.012)}
+.cf-quota-top,.cf-quota-brand,.cf-quota-source,.cf-quota-state,.cf-quota-hero-foot,.cf-quota-section-head,.cf-quota-chart-key{display:flex;align-items:center}
+.cf-quota-top{justify-content:space-between;gap:14px;flex-wrap:wrap}
+.cf-quota-brand{gap:12px}
+.cf-quota-mark{display:grid;place-items:center;width:42px;height:42px;border:1px solid rgba(130,119,255,.27);border-radius:13px;background:rgba(128,109,255,.14);color:#b8aaff;font-size:22px}
+.cf-quota-brand>div{display:grid;gap:4px}
+.cf-quota-brand small,.cf-quota-eyebrow{color:#8f9cb3;font-size:9px;font-weight:700;letter-spacing:1.35px}
+.cf-quota-brand h2{margin:0;color:#f4f5ff;font:600 17px "Space Grotesk",sans-serif;letter-spacing:-.02em}
+.cf-quota-source{gap:7px;padding:7px 10px;border:1px solid rgba(124,211,202,.19);border-radius:999px;background:rgba(20,190,164,.07);color:#9ce6d6;font-size:9px;font-weight:700;letter-spacing:.8px}
+.cf-quota-source i,.cf-quota-state i,.cf-quota-source-note>span:first-child i{width:6px;height:6px;border-radius:50%;background:#56d8b3;box-shadow:0 0 10px rgba(86,216,179,.55)}
+.cf-quota-main{display:grid;grid-template-columns:minmax(0,1.05fr) minmax(260px,.95fr);align-items:end;gap:36px;padding:28px 2px 23px}
+.cf-quota-current{min-width:0}
+.cf-quota-number{margin-top:8px;color:#fff;font:700 clamp(30px,4vw,43px) "Space Grotesk",sans-serif;letter-spacing:-.055em;line-height:1.12;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.cf-quota-number small{margin-left:8px;color:#aab5c7;font:500 13px "Inter",sans-serif;letter-spacing:0}
+.cf-quota-current p{max-width:430px;margin:9px 0 12px;color:#9aa7ba;font-size:11px;line-height:1.65}
+.cf-quota-state{width:max-content;max-width:100%;gap:7px;padding:6px 9px;border:1px solid rgba(255,255,255,.1);border-radius:999px;color:#c6cede;font-size:10px}
+.cf-quota-state.is-ok{border-color:rgba(65,209,159,.2);background:rgba(42,174,127,.08);color:#8be2bd}
+.cf-quota-state.is-warning{border-color:rgba(255,178,90,.24);background:rgba(255,178,90,.08);color:#ffd099}
+.cf-quota-state.is-muted{color:#bbc4d3}
+.cf-quota-state.is-muted i{background:#95a3b8;box-shadow:none}
+.cf-quota-allocation{padding:17px 17px 14px;border:1px solid rgba(174,183,220,.12);border-radius:15px;background:rgba(6,12,24,.25)}
+.cf-quota-allocation-head,.cf-quota-allocation-foot{display:flex;justify-content:space-between;align-items:baseline;gap:12px}
+.cf-quota-allocation-head>span{color:#b8c2d3;font-size:11px}
+.cf-quota-allocation-head strong{color:#f3f4ff;font:700 20px "Space Grotesk",sans-serif;font-variant-numeric:tabular-nums;white-space:nowrap}
+.cf-quota-allocation-head strong small{color:#9aa7ba;font:500 10px "Inter",sans-serif}
+.cf-quota-progress{height:9px;margin:14px 0 9px;overflow:hidden;border:1px solid rgba(255,255,255,.06);border-radius:999px;background:rgba(178,190,211,.12)}
+.cf-quota-progress i{display:block;height:100%;border-radius:inherit;background:linear-gradient(90deg,#42d8c2,#8b7cff);box-shadow:0 0 14px rgba(88,202,205,.26);transition:width .3s ease}
+.cf-quota-progress.is-pending{background:repeating-linear-gradient(135deg,rgba(156,170,196,.12) 0 7px,rgba(156,170,196,.055) 7px 14px);border-style:dashed}
+.cf-quota-progress.is-pending i{width:0!important}
+.cf-quota-allocation-foot{color:#8796ab;font-size:9px}
+.cf-quota-hero-foot{justify-content:space-between;gap:10px;flex-wrap:wrap;padding-top:13px;border-top:1px solid rgba(255,255,255,.08);color:#8796ab;font-size:10px}
+.cf-quota-hero-foot strong{margin-left:4px;color:#c7d0df;font-weight:600}
+.cf-quota-stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.cf-quota-stats article{min-width:0;padding:16px 17px;border:1px solid var(--line,#292d3d);border-radius:15px;background:linear-gradient(150deg,rgba(255,255,255,.035),rgba(255,255,255,.012))}
+.cf-quota-stats article>span{display:block;color:#969fb1;font-size:10px}
+.cf-quota-stats article>strong{display:block;margin-top:8px;color:var(--text,#f5f6fc);font:700 clamp(19px,2.2vw,25px) "Space Grotesk",sans-serif;letter-spacing:-.035em;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.cf-quota-stats article>small{display:block;margin-top:5px;color:#778397;font-size:9px;line-height:1.45}
+.cf-quota-chart-panel{padding:19px 20px 15px;border:1px solid var(--line,#292d3d);border-radius:17px;background:var(--panel,rgba(255,255,255,.025))}
+.cf-quota-section-head{justify-content:space-between;gap:14px;margin-bottom:18px}
+.cf-quota-section-head>div{display:grid;gap:5px}
+.cf-quota-section-head h3{margin:0;color:var(--text,#f7f7fc);font:600 16px "Space Grotesk",sans-serif}
+.cf-quota-section-head p{margin:0;color:var(--muted,#9299aa);font-size:10px}
+.cf-quota-chart-key{gap:7px;color:#9ca8bb;font-size:10px}
+.cf-quota-chart-key i{width:7px;height:7px;border-radius:2px;background:linear-gradient(135deg,#43d9c0,#8c7cff)}
+.cf-quota-chart{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:10px;min-width:0}
+.cf-quota-day{display:grid;grid-template-rows:20px 125px auto auto;justify-items:center;align-items:end;gap:7px;min-width:0}
+.cf-quota-day-value{max-width:100%;color:#cbd3e2;font-size:9px;font-weight:650;font-variant-numeric:tabular-nums;white-space:nowrap}
+.cf-quota-bar{display:flex;align-items:flex-end;justify-content:center;width:min(100%,44px);height:125px;padding:4px;border:1px solid rgba(255,255,255,.055);border-radius:9px;background:rgba(142,157,184,.06)}
+.cf-quota-bar i{display:block;width:100%;min-height:0;border-radius:5px;background:linear-gradient(180deg,#8c7cff 0%,#45d7c3 100%);box-shadow:0 0 16px rgba(92,172,201,.13)}
+.cf-quota-day.no-data .cf-quota-bar{border-style:dashed;background:repeating-linear-gradient(135deg,rgba(148,163,184,.035) 0 6px,rgba(148,163,184,.01) 6px 12px)}
+.cf-quota-day strong{color:#cbd3e2;font-size:10px;font-weight:600}
+.cf-quota-day small{color:#758197;font-size:8px;text-align:center;line-height:1.4}
+.cf-quota-day.no-data .cf-quota-day-value{color:#68758a;font-weight:500;font-size:8px}
+.cf-quota-day.no-data strong{color:#8e99ac}
+.cf-quota-chart-note{margin-top:14px;padding-top:11px;border-top:1px solid var(--line,#292d3d);color:#778397;font-size:9px;line-height:1.6}
+.cf-quota-source-note{display:grid;gap:5px;padding:2px 2px 0;color:#788499;font-size:9px;line-height:1.6}
+.cf-quota-source-note>span:first-child{display:flex;align-items:center;gap:7px;color:#a0adbf;font-weight:600}
+.cf-quota-source-note>span:first-child i{width:5px;height:5px}
+@media(max-width:760px){
+ .cf-quota-main{grid-template-columns:1fr;gap:20px;padding:23px 0 19px}
+ .cf-quota-stats{grid-template-columns:repeat(2,minmax(0,1fr))}
+ .cf-quota-stats article:last-child{grid-column:1/-1}
+ .cf-quota-chart-panel{padding:16px 12px}
+ .cf-quota-chart{gap:5px}
+ .cf-quota-day{grid-template-rows:18px 105px auto auto;gap:6px}
+ .cf-quota-bar{height:105px;width:min(100%,34px)}
+ .cf-quota-day-value{font-size:8px}
+ .cf-quota-day small{font-size:7px}
+}
+@media(max-width:440px){
+ .cf-quota-hero{padding:17px 15px 14px}
+ .cf-quota-source{font-size:8px}
+ .cf-quota-number{font-size:30px}
+ .cf-quota-stats article{padding:13px}
+ .cf-quota-chart{gap:3px}
+ .cf-quota-day{grid-template-rows:18px 88px auto auto}
+ .cf-quota-bar{height:88px;padding:3px}
+ .cf-quota-day-value{font-size:7px}
+ .cf-quota-day strong{font-size:9px}
+ .cf-quota-day small{font-size:6px}
+ .cf-quota-hero-foot{font-size:9px}
+}
