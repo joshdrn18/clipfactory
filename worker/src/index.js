@@ -328,6 +328,61 @@ if(adminMediaDelete&&method==="DELETE"){
  ]);
  return json({ok:true,deleted:true,file_name:asset.file_name,size_bytes:asset.size_bytes});
 }
+if(path==="/admin/cloudflare/usage"&&method==="GET"){
+ const apiToken=String(env.CF_API_TOKEN||"");
+ if(!apiToken)return json({configured:false,available:false,reason:"CF_API_TOKEN secret is not configured on this Worker."});
+ const cfAccountId=String(env.CF_ACCOUNT_ID||"7fba808c5a694f2755dc45ab94cee505");
+ const now=new Date(),today=now.toISOString().slice(0,10);
+ const firstDay=new Date(Date.UTC(now.getUTCFullYear(),now.getUTCMonth(),now.getUTCDate()-6)).toISOString().slice(0,10);
+ try{
+  const endpoint=new URL("https://api.cloudflare.com/client/v4/accounts/"+encodeURIComponent(cfAccountId)+"/billable/usage");
+  endpoint.searchParams.set("from",firstDay);
+  endpoint.searchParams.set("to",today);
+  const response=await fetch(endpoint.toString(),{headers:{Authorization:"Bearer "+apiToken,Accept:"application/json"}});
+  const payload=await response.json().catch(()=>({}));
+  if(!response.ok||payload.success===false){
+   const detail=(payload.errors||[]).map(item=>item.message).filter(Boolean).join("; ");
+   return json({configured:true,available:false,status:response.status,reason:detail||"Cloudflare Billable Usage API request failed."});
+  }
+  const records=Array.isArray(payload.result)?payload.result:[];
+  const aiRecords=records.filter(record=>{
+   const text=[record.x_BillableMetricId,record.x_BillableMetricName,record.ChargeDescription,record.x_ProductFamilyName,record.x_ProductFamilyId,record.ServiceName].join(" ").toLowerCase().replace(/[_-]+/g," ");
+   return text.includes("workers ai")||(/neurons?/.test(text)&&text.includes("workers"));
+  });
+  const neuronRecords=aiRecords.filter(record=>/neurons?/i.test(String(record.ConsumedUnit||record.PricingUnit||"")));
+  const days=[];
+  for(let offset=6;offset>=0;offset--){
+   const date=new Date(Date.UTC(now.getUTCFullYear(),now.getUTCMonth(),now.getUTCDate()-offset)).toISOString().slice(0,10);
+   const dayRows=neuronRecords.filter(record=>String(record.ChargePeriodStart||"").slice(0,10)===date);
+   const neurons=dayRows.reduce((sum,record)=>sum+Number(record.ConsumedQuantity||record.PricingQuantity||0),0);
+   days.push({date,neurons,reported:dayRows.length>0});
+  }
+  const todayData=days[days.length-1],limit=10000;
+  const nextReset=new Date(Date.UTC(now.getUTCFullYear(),now.getUTCMonth(),now.getUTCDate()+1)).toISOString();
+  return json({
+   configured:true,available:true,reported:todayData.reported,
+   account_id:cfAccountId,
+   used_neurons:todayData.reported?todayData.neurons:null,
+   daily_free_limit:limit,
+   remaining_neurons:todayData.reported?Math.max(0,limit-todayData.neurons):null,
+   usage_percent:todayData.reported?Math.round(todayData.neurons/limit*1000)/10:null,
+   over_free_limit:todayData.reported&&todayData.neurons>limit,
+   reset_at:nextReset,reset_timezone:"UTC",
+   checked_at:now.toISOString(),days,
+   metrics:aiRecords.map(record=>({
+    name:record.x_BillableMetricName||record.ChargeDescription||record.x_BillableMetricId||"Workers AI",
+    unit:record.ConsumedUnit||record.PricingUnit||"—",
+    quantity:Number(record.ConsumedQuantity||record.PricingQuantity||0),
+    date:String(record.ChargePeriodStart||"").slice(0,10),
+    metric_id:record.x_BillableMetricId||""
+   })).slice(0,50),
+   source:"Cloudflare Billable Usage API v2"
+  });
+ }catch(error){
+  console.error("Cloudflare usage check failed:",error?.message||error);
+  return json({configured:true,available:false,reason:"Could not contact Cloudflare Billable Usage API."});
+ }
+}
 if(path==="/admin/system"&&method==="GET"){
  const counts=await env.DB.prepare("SELECT (SELECT COUNT(*) FROM users) AS users,(SELECT COUNT(*) FROM projects) AS projects,(SELECT COUNT(*) FROM media_assets) AS media,(SELECT COUNT(*) FROM media_uploads) AS uploads").first();
  return json({checked_at:new Date().toISOString(),api:{ok:true,detail:"Worker request handled successfully"},database:{ok:true,detail:"D1 query completed successfully"},storage:{ok:!!env.MEDIA,detail:env.MEDIA?"R2 binding MEDIA is configured":"R2 binding MEDIA is missing"},counts});
