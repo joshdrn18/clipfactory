@@ -206,17 +206,44 @@ async function getFFmpeg(){
  }finally{clearTimeout(loadTimer)}
  state.ffmpeg=ffmpeg;return ffmpeg;
 }
-async function execFFmpegWithTimeout(ffmpeg,args,timeoutMs=30*60*1000,stallTimeoutMs=8*60*1000){
- let timer,watchdog;
- ffmpeg.__lastProgressAt=Date.now();
- const stopEngine=()=>{try{ffmpeg.terminate()}catch(e){}if(state.ffmpeg===ffmpeg)state.ffmpeg=null;};
- try{
-  return await Promise.race([
-   ffmpeg.exec(args),
-   new Promise((_,reject)=>{timer=setTimeout(()=>{stopEngine();reject(new Error("Render exceeded the 30-minute safety limit. The video engine was reset; retry this file or use a shorter clip."))},timeoutMs)}),
-   new Promise((_,reject)=>{watchdog=setInterval(()=>{if(Date.now()-(ffmpeg.__lastProgressAt||Date.now())>stallTimeoutMs){clearInterval(watchdog);stopEngine();reject(new Error("Render stopped responding for 8 minutes. The video engine was reset; retry this file or use a shorter clip."))}},15000)})
-  ]);
- }finally{clearTimeout(timer);clearInterval(watchdog)}
+async function execFFmpegWithTimeout(ffmpeg,args,timeoutMs=60*60*1000,stallTimeoutMs=15*60*1000){
+  let timer,watchdog,rejectSafety;
+  let stopped=false;
+  const stopEngine=()=>{
+    if(stopped)return;
+    stopped=true;
+    try{ffmpeg.terminate()}catch(error){console.warn("ClipFactory FFmpeg worker reset:",error)}
+    if(state.ffmpeg===ffmpeg)state.ffmpeg=null;
+  };
+  const safetyStop=new Promise((_,reject)=>{rejectSafety=reject});
+  const abortRender=message=>{
+    // Reject with the useful timeout reason before terminating the active worker.
+    // Otherwise ffmpeg.terminate() can win Promise.race with "called FFmpeg.terminate()".
+    rejectSafety(new Error(message));
+    queueMicrotask(stopEngine);
+  };
+  ffmpeg.__lastProgressAt=Date.now();
+  try{
+    return await Promise.race([
+      ffmpeg.exec(args),
+      safetyStop,
+      new Promise((_,reject)=>{
+        timer=setTimeout(()=>abortRender("Render exceeded the 60-minute safety limit. The FFmpeg worker was reset; retry this file or use a shorter clip."),timeoutMs);
+      }),
+      new Promise((_,reject)=>{
+        watchdog=setInterval(()=>{
+          const lastActivity=Number(ffmpeg.__lastProgressAt)||Date.now();
+          if(Date.now()-lastActivity>stallTimeoutMs){
+            clearInterval(watchdog);
+            abortRender("FFmpeg produced no log or progress update for 15 minutes. The worker was reset; retry this file or use a shorter clip.");
+          }
+        },15000);
+      })
+    ]);
+  }finally{
+    clearTimeout(timer);
+    clearInterval(watchdog);
+  }
 }
 // Retry setup and chunk uploads as one storage operation; reuse the session ID for safe retries.
 async function uploadMedia(file,projectId,kind,forceBackup=false,onProgress){
