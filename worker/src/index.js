@@ -334,6 +334,7 @@ if(path==="/admin/cloudflare/usage"&&method==="GET"){
  const cfAccountId=String(env.CF_ACCOUNT_ID||"7fba808c5a694f2755dc45ab94cee505");
  const now=new Date(),today=now.toISOString().slice(0,10);
  const firstDay=new Date(Date.UTC(now.getUTCFullYear(),now.getUTCMonth(),now.getUTCDate()-6)).toISOString().slice(0,10);
+ const tomorrow=new Date(Date.UTC(now.getUTCFullYear(),now.getUTCMonth(),now.getUTCDate()+1)).toISOString().slice(0,10);
  const cfGet=async(path,query={})=>{
   const endpoint=new URL("https://api.cloudflare.com/client/v4"+path);
   for(const [key,value] of Object.entries(query))if(value!==undefined&&value!==null)endpoint.searchParams.set(key,String(value));
@@ -342,70 +343,82 @@ if(path==="/admin/cloudflare/usage"&&method==="GET"){
   return {response,payload};
  };
  const apiError=(payload)=>((payload?.errors||[]).map(item=>item.message).filter(Boolean).join("; ")||"Cloudflare API request failed.");
- const getAiRows=(records)=>records.filter(record=>{
-  const text=[record.x_BillableMetricId,record.x_BillableMetricName,record.ChargeDescription,record.x_ProductFamilyName,record.x_ProductFamilyId,record.ServiceName,record.ServiceFamilyName].join(" ").toLowerCase().replace(/[_-]+/g," ");
-  return text.includes("workers ai")||(/neurons?/.test(text)&&text.includes("workers"));
- });
- const buildDaily=(rows)=>{
-  const neuronRows=rows.filter(record=>/neurons?/i.test(String(record.ConsumedUnit||record.PricingUnit||record.x_BillableMetricName||"")));
+ const buildEmptyDays=()=>{
   const days=[];
   for(let offset=6;offset>=0;offset--){
    const date=new Date(Date.UTC(now.getUTCFullYear(),now.getUTCMonth(),now.getUTCDate()-offset)).toISOString().slice(0,10);
-   const dayRows=neuronRows.filter(record=>String(record.ChargePeriodStart||"").slice(0,10)===date);
-   const neurons=dayRows.reduce((sum,record)=>sum+Number(record.ConsumedQuantity||0),0);
-   const billable=dayRows.reduce((sum,record)=>sum+Number(record.PricingQuantity||0),0);
-   days.push({date,neurons,billable_neurons:billable,reported:dayRows.length>0});
+   days.push({date,neurons:0,reported:false});
   }
   return days;
  };
  const quotaPayload=(days,extra={})=>{
   const current=days[days.length-1],limit=10000;
   const nextReset=new Date(Date.UTC(now.getUTCFullYear(),now.getUTCMonth(),now.getUTCDate()+1)).toISOString();
-  return {configured:true,available:true,reported:current.reported,account_id:cfAccountId,used_neurons:current.reported?current.neurons:null,billable_neurons:current.reported?current.billable_neurons:null,daily_free_limit:limit,remaining_neurons:current.reported?Math.max(0,limit-current.neurons):null,usage_percent:current.reported?Math.round(current.neurons/limit*1000)/10:null,over_free_limit:current.reported&&current.neurons>limit,reset_at:nextReset,reset_timezone:"UTC",checked_at:now.toISOString(),days,...extra};
+  return {configured:true,available:true,reported:current.reported,account_id:cfAccountId,used_neurons:current.reported?current.neurons:null,daily_free_limit:limit,remaining_neurons:current.reported?Math.max(0,limit-current.neurons):null,usage_percent:current.reported?Math.round(current.neurons/limit*1000)/10:null,over_free_limit:current.reported&&current.neurons>limit,reset_at:nextReset,reset_timezone:"UTC",checked_at:now.toISOString(),days,...extra};
  };
  try{
   const v2=await cfGet("/accounts/"+encodeURIComponent(cfAccountId)+"/billable/usage",{from:firstDay,to:today});
   if(v2.response.ok&&v2.payload.success!==false){
    const records=Array.isArray(v2.payload.result)?v2.payload.result:[];
-   const aiRecords=getAiRows(records),days=buildDaily(aiRecords);
-   return json(quotaPayload(days,{metrics:aiRecords.map(record=>({name:record.x_BillableMetricName||record.ChargeDescription||record.x_BillableMetricId||"Workers AI",unit:record.ConsumedUnit||record.PricingUnit||"—",quantity:Number(record.ConsumedQuantity||0),billable_quantity:Number(record.PricingQuantity||0),date:String(record.ChargePeriodStart||"").slice(0,10),metric_id:record.x_BillableMetricId||""})).slice(0,50),source:"Cloudflare Billable Usage API v2",mode:"v2",data_scope:"all_metered_usage"}));
+   const aiRecords=records.filter(record=>{
+    const text=[record.x_BillableMetricId,record.x_BillableMetricName,record.ChargeDescription,record.x_ProductFamilyName,record.x_ProductFamilyId,record.ServiceName,record.ServiceFamilyName].join(" ").toLowerCase().replace(/[_-]+/g," ");
+    return text.includes("workers ai")||(/neurons?/.test(text)&&text.includes("workers"));
+   });
+   const neuronRows=aiRecords.filter(record=>/neurons?/i.test(String(record.ConsumedUnit||record.PricingUnit||record.x_BillableMetricName||"")));
+   const days=buildEmptyDays();
+   for(const day of days){
+    const dayRows=neuronRows.filter(record=>String(record.ChargePeriodStart||"").slice(0,10)===day.date);
+    if(dayRows.length){day.neurons=dayRows.reduce((sum,record)=>sum+Number(record.ConsumedQuantity||0),0);day.reported=true;}
+   }
+   const metrics=aiRecords.map(record=>({name:record.x_BillableMetricName||record.ChargeDescription||record.x_BillableMetricId||"Workers AI",unit:record.ConsumedUnit||record.PricingUnit||"—",quantity:Number(record.ConsumedQuantity||0),date:String(record.ChargePeriodStart||"").slice(0,10),metric_id:record.x_BillableMetricId||""})).slice(0,50);
+   return json(quotaPayload(days,{metrics,source:"Cloudflare Billable Usage API v2",mode:"v2",data_scope:"all_metered_usage"}));
   }
   const v2Status=v2.response.status,v2Reason=apiError(v2.payload);
   if(v2Status===401||v2Status===403){
-   const info=await cfGet("/accounts/"+encodeURIComponent(cfAccountId)+"/billable-usage/info");
-   if(!info.response.ok||info.payload.success===false){
-    const detail=apiError(info.payload);
-    const tokenCheck=await cfGet("/user/tokens/verify").catch(()=>null);
-    const verified=!!(tokenCheck?.response?.ok&&tokenCheck?.payload?.success!==false&&tokenCheck?.payload?.result?.status==="active");
-    return json({configured:true,available:false,status:info.response.status,reason_code:"billing_permission_denied",reason:"Cloudflare rejected the token on both the usage endpoint and the billing-info endpoint. "+detail,diagnostics:{usage_v2_status:v2Status,usage_v2_error:v2Reason,billing_info_status:info.response.status,token_valid:verified?true:(tokenCheck?.response?.ok?false:null)},checked_at:now.toISOString()});
-   }
-   const infoResult=info.payload.result||{},subscriptions=Array.isArray(infoResult.subscriptions)?infoResult.subscriptions:[];
-   if(infoResult.covered===false){
-    return json({configured:true,available:false,status:403,reason_code:"account_not_covered",reason:"The token can read billing information, but Cloudflare reports this account is not covered by the Billable Usage service.",diagnostics:{usage_v2_status:v2Status,billing_info_access:true,account_covered:false,active_subscriptions:subscriptions.length},checked_at:now.toISOString()});
-   }
-   // V2 is Restricted and may be denied independently of Billing Read. Try the V1 billing-period endpoint as a compatible fallback.
-   const v1=await cfGet("/accounts/"+encodeURIComponent(cfAccountId)+"/billable-usage");
-   if(v1.response.ok&&v1.payload.success!==false){
-    const records=Array.isArray(v1.payload.result)?v1.payload.result:[];
-    const aiRecords=getAiRows(records),days=buildDaily(aiRecords);
+   // V2 is restricted. Use Cloudflare's account-level AI inference analytics dataset for actual neuron consumption.
+   const query='query { viewer { accounts(filter: { accountTag: "'+cfAccountId+'" }) { aiInferenceAdaptiveGroups(limit: 1000, filter: { datetime_geq: "'+firstDay+'T00:00:00Z", datetime_lt: "'+tomorrow+'T00:00:00Z" }) { dimensions { date } sum { totalNeurons } count } } } }';
+   const analyticsResponse=await fetch("https://api.cloudflare.com/client/v4/graphql",{
+    method:"POST",
+    headers:{Authorization:"Bearer "+apiToken,"Content-Type":"application/json",Accept:"application/json"},
+    body:JSON.stringify({query})
+   });
+   const analytics=await analyticsResponse.json().catch(()=>({}));
+   const analyticsErrors=Array.isArray(analytics.errors)?analytics.errors.map(error=>error.message||"GraphQL query failed").join("; "):"";
+   const accountRows=analytics?.data?.viewer?.accounts;
+   const groups=Array.isArray(accountRows?.[0]?.aiInferenceAdaptiveGroups)?accountRows[0].aiInferenceAdaptiveGroups:null;
+   if(analyticsResponse.ok&&!analyticsErrors&&groups){
+    const days=buildEmptyDays();
+    const byDate=new Map(days.map(day=>[day.date,day]));
+    for(const row of groups){
+     const date=String(row?.dimensions?.date||row?.dimensions?.datetime||"").slice(0,10);
+     const day=byDate.get(date);
+     if(!day)continue;
+     day.neurons+=Number(row?.sum?.totalNeurons||0);
+     if(Number(row?.count||0)>0||Number(row?.sum?.totalNeurons||0)>0)day.reported=true;
+    }
+    const metrics=days.filter(day=>day.reported).map(day=>({name:"Workers AI · total Neurons",unit:"neurons",quantity:day.neurons,date:day.date}));
     return json(quotaPayload(days,{
-     mode:"v1_fallback",
-     source:"Cloudflare Billable Usage API v1",
-     data_scope:"billing_period_metered_usage",
-     note:"V1 returns daily records for the current billing period. Usage and cost data are updated daily; the current UTC day may not have a row yet.",
-     v2_diagnostic:{status:v2Status,error:v2Reason,documentation_url:v2.payload?.documentation_url||v2.payload?.errors?.[0]?.documentation_url||null},
-     diagnostics:{billing_info_access:true,account_covered:infoResult.covered??null,active_subscriptions:subscriptions.length,v2_status:v2Status},
-     billing_period_start:records.map(record=>record.BillingPeriodStart).filter(Boolean).sort()[0]||null,
-     metrics:aiRecords.map(record=>({name:record.x_BillableMetricName||record.ChargeDescription||record.x_BillableMetricId||record.ServiceName||"Workers AI",unit:record.ConsumedUnit||record.PricingUnit||"—",quantity:Number(record.ConsumedQuantity||0),billable_quantity:Number(record.PricingQuantity||0),cost:Number(record.ContractedCost||record.BilledCost||0),currency:record.BillingCurrency||"USD",date:String(record.ChargePeriodStart||"").slice(0,10),metric_id:record.x_BillableMetricId||""})).slice(0,50)
+     mode:"graphql_analytics",
+     source:"Cloudflare GraphQL Analytics · aiInferenceAdaptiveGroups",
+     data_scope:"account_workers_ai_inference",
+     note:"Account-level Workers AI inference analytics. Adaptive aggregation may be sampled; use Cloudflare Billing for authoritative charges.",
+     analytics_rows:groups.length,
+     metrics,
+     v2_diagnostic:{status:v2Status,error:v2Reason}
     }));
    }
-   const v1Reason=apiError(v1.payload);
-   return json({configured:true,available:false,status:v1.response.status,reason_code:"usage_endpoints_restricted",reason:"Billing Info and account coverage checks passed, but Cloudflare denied both usage endpoints. V2: "+v2Reason+" V1: "+v1Reason,diagnostics:{usage_v2_status:v2Status,usage_v2_error:v2Reason,usage_v2_documentation_url:v2.payload?.documentation_url||v2.payload?.errors?.[0]?.documentation_url||null,usage_v1_status:v1.response.status,usage_v1_error:v1Reason,billing_info_access:true,account_covered:infoResult.covered??null,active_subscriptions:subscriptions.length},checked_at:now.toISOString()});
+   const analyticsStatus=analyticsResponse.status;
+   const analyticsReason=analyticsErrors||(!analyticsResponse.ok?apiError(analytics):(!Array.isArray(accountRows)||!accountRows.length?"Cloudflare GraphQL returned no account data.":"The Workers AI analytics dataset was not returned."));
+   const permissionDenied=/auth|permission|not authorized|forbidden|denied/i.test(analyticsReason)||analyticsStatus===401||analyticsStatus===403;
+   const reason=permissionDenied
+    ?"Billable Usage v2 is restricted, and the V1 billing feed cannot provide the free-tier daily Neurons counter. Cloudflare also rejected the GraphQL analytics query. Edit the existing API token and add Account > Account Analytics > Read, then retry. No second token is needed."
+    :"Cloudflare could not return Workers AI analytics: "+analyticsReason;
+   return json({configured:true,available:false,status:analyticsStatus,reason_code:permissionDenied?"analytics_permission_denied":"analytics_query_failed",reason,diagnostics:{usage_v2_status:v2Status,usage_v2_error:v2Reason,analytics_http_status:analyticsStatus,analytics_error:analyticsReason,required_permission:"Account > Account Analytics > Read"},checked_at:now.toISOString()});
   }
   return json({configured:true,available:false,status:v2Status,reason_code:"usage_api_failed",reason:v2Reason,checked_at:now.toISOString()});
  }catch(error){
   console.error("Cloudflare usage check failed:",error?.message||error);
-  return json({configured:true,available:false,reason_code:"usage_api_network_error",reason:"Could not contact Cloudflare Billable Usage API.",checked_at:now.toISOString()});
+  return json({configured:true,available:false,reason_code:"usage_api_network_error",reason:"Could not contact Cloudflare usage or analytics APIs.",checked_at:now.toISOString()});
  }
 }
 if(path==="/admin/system"&&method==="GET"){
