@@ -1150,9 +1150,55 @@ async function loadAdmin(tab){
     const limit=Number(d.daily_free_limit||10000);
     const remaining=d.reported?Number(d.remaining_neurons||0):null;
     const pct=d.reported?Math.max(0,Math.min(100,Number(d.usage_percent||0))):0;
-    const dayRows=(d.days||[]).map(day=>'<div class="cf-usage-day"><span>'+escapeHtml(day.date)+'</span><div class="cf-usage-track"><i style="width:'+Math.max(0,Math.min(100,Number(day.neurons||0)/limit*100))+'%"></i></div><strong>'+(day.reported?fmt(day.neurons):"—")+'</strong></div>').join("");
-    const metricRows=(d.metrics||[]).map(m=>'<div class="admin-row"><span><strong>'+escapeHtml(m.name)+'</strong><br><small>'+escapeHtml(m.metric_id||"Cloudflare metric")+'</small></span><span>'+escapeHtml(m.date||"—")+'</span><strong>'+fmt(m.quantity)+' '+escapeHtml(m.unit)+(m.billable_quantity!==undefined?'<small class="cf-billable-line">Billable: '+fmt(m.billable_quantity)+' '+escapeHtml(m.unit)+'</small>':'')+(m.cost!==undefined?'<small class="cf-billable-line">Cost: '+fmt(m.cost)+' '+escapeHtml(m.currency||"USD")+'</small>':'')+'</strong></div>').join("");
-    root.innerHTML='<div class="admin-stats"><article class="admin-stat"><span>Workers AI · used today</span><strong>'+(used===null?"—":fmt(used))+' <small>neurons</small></strong></article><article class="admin-stat"><span>Free daily allocation</span><strong>'+fmt(limit)+' <small>neurons</small></strong></article><article class="admin-stat"><span>Remaining today</span><strong>'+(remaining===null?"Waiting for data":fmt(remaining))+'</strong></article><article class="admin-stat"><span>Quota consumed</span><strong>'+(d.reported?pct.toFixed(1)+"%":"—")+'</strong></article></div><section class="cf-usage-panel"><div class="admin-section-intro"><strong>Daily Workers AI quota'+(d.mode==="graphql_analytics"?" · GraphQL Analytics":d.mode==="v1_fallback"?" · V1 fallback":"")+'</strong><span>'+(d.reported?(d.over_free_limit?"Above free allocation":"Within free allocation"):"No neuron usage row reported for today yet")+'</span></div><div class="cf-usage-track cf-usage-main"><i style="width:'+pct+'%"></i></div><div class="cf-usage-foot"><span>Resets at 00:00 UTC</span><span>Next reset '+new Date(d.reset_at).toLocaleString()+'</span></div></section><section class="cf-usage-panel"><div class="admin-section-intro"><strong>Last 7 days</strong><span>'+(d.mode==="graphql_analytics"?"GraphQL Analytics · account-level totalNeurons":d.mode==="v1_fallback"?"Billable Usage v1 · billing records":"Cloudflare-reported neuron usage")+'</span></div>'+ (dayRows||'<div class="empty-state">No daily records returned.</div>')+'</section><section class="cf-usage-panel"><div class="admin-section-intro"><strong>Usage metrics</strong><span>Latest records from Cloudflare</span></div>'+(metricRows||'<div class="empty-state">No Workers AI metric records returned.</div>')+'</section><div class="notice">'+(d.note?escapeHtml(d.note)+' ':'')+'Source: '+escapeHtml(d.source||"Cloudflare Billable Usage API")+'. The 10,000-neuron daily free allocation resets at 00:00 UTC. On Workers Paid, usage above the free allocation is billed; on Workers Free, requests stop when the limit is exceeded. Last checked '+new Date(d.checked_at).toLocaleString()+'</div>';
+    const days=Array.isArray(d.days)?d.days:[];
+    const recordedDays=days.filter(day=>day.reported);
+    const recordedTotal=recordedDays.reduce((sum,day)=>sum+Number(day.neurons||0),0);
+    const sourceLabel=d.mode==="graphql_analytics"?"GRAPHQL ANALYTICS":d.mode==="v1_fallback"?"BILLABLE USAGE V1":"CLOUDFLARE USAGE";
+    const sourceCaption=d.mode==="graphql_analytics"?"GraphQL Analytics · totalNeurons":d.mode==="v1_fallback"?"Billable Usage v1 · billing records":"Cloudflare-reported neuron usage";
+    const todayLabel=d.reported?(d.over_free_limit?"Above free allocation":"Within free allocation"):"No data reported today";
+    const todayValue=used===null?"Waiting for data":fmt(used);
+    const progressClass=d.reported?"":"is-pending";
+    const chartRows=days.map(day=>{
+     const value=Number(day.neurons||0);
+     const height=day.reported?Math.max(3,Math.min(100,value/limit*100)):0;
+     const dateLabel=new Date(day.date+"T00:00:00Z").toLocaleDateString(undefined,{day:"2-digit",month:"short",timeZone:"UTC"});
+     return '<div class="cf-quota-day '+(day.reported?"has-data":"no-data")+'"><div class="cf-quota-day-value">'+(day.reported?fmt(value):"No record")+'</div><div class="cf-quota-bar"><i style="height:'+height+'%"></i></div><strong>'+escapeHtml(dateLabel)+'</strong><small>'+(day.reported?(value/limit*100).toFixed(1)+"% of daily limit":"Not reported")+'</small></div>';
+    }).join("");
+    const checkedAt=d.checked_at?new Date(d.checked_at).toLocaleString():"Not synced";
+    root.innerHTML=`
+     <div class="cf-quota-dashboard">
+      <section class="cf-quota-hero">
+       <div class="cf-quota-top">
+        <div class="cf-quota-brand"><span class="cf-quota-mark">◈</span><div><small>CLOUDFLARE / AI USAGE</small><h2>Workers AI quota</h2></div></div>
+        <span class="cf-quota-source"><i></i>${sourceLabel}</span>
+       </div>
+       <div class="cf-quota-main">
+        <div class="cf-quota-current">
+         <span class="cf-quota-eyebrow">TODAY'S CONSUMPTION</span>
+         <div class="cf-quota-number">${todayValue}<small>${used===null?"":"neurons"}</small></div>
+         <p>${d.reported?"Usage reported by Cloudflare for today.":"Cloudflare has not reported a daily usage record yet. This is not the same as zero usage."}</p>
+         <span class="cf-quota-state ${d.reported?(d.over_free_limit?"is-warning":"is-ok"):"is-muted"}"><i></i>${todayLabel}</span>
+        </div>
+        <div class="cf-quota-allocation">
+         <div class="cf-quota-allocation-head"><span>Free daily allocation</span><strong>${fmt(limit)} <small>neurons</small></strong></div>
+         <div class="cf-quota-progress ${progressClass}"><i style="width:${pct}%"></i></div>
+         <div class="cf-quota-allocation-foot"><span>${d.reported?pct.toFixed(1)+"% used":"Awaiting today's record"}</span><span>Resets 00:00 UTC</span></div>
+        </div>
+       </div>
+       <div class="cf-quota-hero-foot"><span>Next reset <strong>${d.reset_at?new Date(d.reset_at).toLocaleString():"—"}</strong></span><span>Last sync <strong>${escapeHtml(checkedAt)}</strong></span></div>
+      </section>
+      <div class="cf-quota-stats">
+       <article><span>Remaining today</span><strong>${remaining===null?"Not available":fmt(remaining)}</strong><small>${remaining===null?"Waiting for today's usage record":"Neurons left in today's allocation"}</small></article>
+       <article><span>Recorded usage · 7 days</span><strong>${fmt(recordedTotal)}</strong><small>Across ${recordedDays.length} of ${days.length||7} reported days</small></article>
+       <article><span>Daily allocation</span><strong>${fmt(limit)}</strong><small>Free Workers AI allowance</small></article>
+      </div>
+      <section class="cf-quota-chart-panel">
+       <div class="cf-quota-section-head"><div><span class="cf-quota-eyebrow">USAGE HISTORY</span><h3>Last 7 days</h3><p>${sourceCaption}</p></div><span class="cf-quota-chart-key"><i></i> Neurons</span></div>
+       <div class="cf-quota-chart">${chartRows||'<div class="empty-state">No daily records returned.</div>'}</div>
+       <div class="cf-quota-chart-note">Bars show recorded consumption as a share of the 10,000-neuron daily allocation. Missing bars mean Cloudflare has not returned a record for that date.</div>
+      </section>
+      <div class="cf-quota-source-note"><span><i></i>Source: ${escapeHtml(d.source||"Cloudflare API")}</span><span>${d.note?escapeHtml(d.note):"Usage may be delayed while Cloudflare processes daily analytics."}</span></div>
+     </div>`;
    }
   }else if(state.adminTab==="system"){
    const d=await api("/admin/system");
