@@ -186,3 +186,9 @@
 .cf-overview-action p{margin:8px 0 14px;color:var(--muted);font-size:12px;line-height:1.6}
 @media(max-width:720px){.cf-overview-card{grid-template-columns:1fr;padding:16px}.cf-overview-action{padding:14px 0 0;border-left:0;border-top:1px solid var(--border,rgba(255,255,255,.09))}.cf-overview-status{margin-left:0}}
 
+
+
+.cf-billable-line{display:block;margin-top:3px;color:var(--muted);font-size:10px;font-weight:500;white-space:nowrap}
+.cf-diagnostics{margin-top:12px;border-top:1px solid var(--border,rgba(255,255,255,.08))}
+.cf-diagnostics .admin-row{padding:9px 0;border-bottom:1px solid var(--border,rgba(255,255,255,.08))}
+.cf-diagnostics .admin-row:last-child{border-bottom:0}
