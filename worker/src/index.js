@@ -330,57 +330,57 @@ if(adminMediaDelete&&method==="DELETE"){
 }
 if(path==="/admin/cloudflare/usage"&&method==="GET"){
  const apiToken=String(env.CF_API_TOKEN||"");
- if(!apiToken)return json({configured:false,available:false,reason:"CF_API_TOKEN secret is not configured on this Worker."});
+ if(!apiToken)return json({configured:false,available:false,reason:"CF_API_TOKEN secret is not configured on this Worker.",reason_code:"token_missing"});
  const cfAccountId=String(env.CF_ACCOUNT_ID||"7fba808c5a694f2755dc45ab94cee505");
  const now=new Date(),today=now.toISOString().slice(0,10);
  const firstDay=new Date(Date.UTC(now.getUTCFullYear(),now.getUTCMonth(),now.getUTCDate()-6)).toISOString().slice(0,10);
- try{
-  const endpoint=new URL("https://api.cloudflare.com/client/v4/accounts/"+encodeURIComponent(cfAccountId)+"/billable/usage");
-  endpoint.searchParams.set("from",firstDay);
-  endpoint.searchParams.set("to",today);
+ const cfGet=async(path,query={})=>{
+  const endpoint=new URL("https://api.cloudflare.com/client/v4"+path);
+  for(const [key,value] of Object.entries(query))if(value!==undefined&&value!==null)endpoint.searchParams.set(key,String(value));
   const response=await fetch(endpoint.toString(),{headers:{Authorization:"Bearer "+apiToken,Accept:"application/json"}});
   const payload=await response.json().catch(()=>({}));
-  if(!response.ok||payload.success===false){
-   const detail=(payload.errors||[]).map(item=>item.message).filter(Boolean).join("; ");
-   return json({configured:true,available:false,status:response.status,reason:detail||"Cloudflare Billable Usage API request failed."});
+  return {response,payload};
+ };
+ const apiError=(payload)=>((payload?.errors||[]).map(item=>item.message).filter(Boolean).join("; ")||"Cloudflare API request failed.");
+ try{
+  const v2=await cfGet("/accounts/"+encodeURIComponent(cfAccountId)+"/billable/usage",{from:firstDay,to:today});
+  if(v2.response.ok&&v2.payload.success!==false){
+   const records=Array.isArray(v2.payload.result)?v2.payload.result:[];
+   const aiRecords=records.filter(record=>{
+    const text=[record.x_BillableMetricId,record.x_BillableMetricName,record.ChargeDescription,record.x_ProductFamilyName,record.x_ProductFamilyId,record.ServiceName].join(" ").toLowerCase().replace(/[_-]+/g," ");
+    return text.includes("workers ai")||(/neurons?/.test(text)&&text.includes("workers"));
+   });
+   const neuronRecords=aiRecords.filter(record=>/neurons?/i.test(String(record.ConsumedUnit||record.PricingUnit||"")));
+   const days=[];
+   for(let offset=6;offset>=0;offset--){
+    const date=new Date(Date.UTC(now.getUTCFullYear(),now.getUTCMonth(),now.getUTCDate()-offset)).toISOString().slice(0,10);
+    const dayRows=neuronRecords.filter(record=>String(record.ChargePeriodStart||"").slice(0,10)===date);
+    const neurons=dayRows.reduce((sum,record)=>sum+Number(record.ConsumedQuantity||record.PricingQuantity||0),0);
+    days.push({date,neurons,reported:dayRows.length>0});
+   }
+   const todayData=days[days.length-1],limit=10000;
+   const nextReset=new Date(Date.UTC(now.getUTCFullYear(),now.getUTCMonth(),now.getUTCDate()+1)).toISOString();
+   return json({configured:true,available:true,reported:todayData.reported,account_id:cfAccountId,used_neurons:todayData.reported?todayData.neurons:null,daily_free_limit:limit,remaining_neurons:todayData.reported?Math.max(0,limit-todayData.neurons):null,usage_percent:todayData.reported?Math.round(todayData.neurons/limit*1000)/10:null,over_free_limit:todayData.reported&&todayData.neurons>limit,reset_at:nextReset,reset_timezone:"UTC",checked_at:now.toISOString(),days,metrics:aiRecords.map(record=>({name:record.x_BillableMetricName||record.ChargeDescription||record.x_BillableMetricId||"Workers AI",unit:record.ConsumedUnit||record.PricingUnit||"—",quantity:Number(record.ConsumedQuantity||record.PricingQuantity||0),date:String(record.ChargePeriodStart||"").slice(0,10),metric_id:record.x_BillableMetricId||""})).slice(0,50),source:"Cloudflare Billable Usage API v2",data_scope:"all_metered_usage"});
   }
-  const records=Array.isArray(payload.result)?payload.result:[];
-  const aiRecords=records.filter(record=>{
-   const text=[record.x_BillableMetricId,record.x_BillableMetricName,record.ChargeDescription,record.x_ProductFamilyName,record.x_ProductFamilyId,record.ServiceName].join(" ").toLowerCase().replace(/[_-]+/g," ");
-   return text.includes("workers ai")||(/neurons?/.test(text)&&text.includes("workers"));
-  });
-  const neuronRecords=aiRecords.filter(record=>/neurons?/i.test(String(record.ConsumedUnit||record.PricingUnit||"")));
-  const days=[];
-  for(let offset=6;offset>=0;offset--){
-   const date=new Date(Date.UTC(now.getUTCFullYear(),now.getUTCMonth(),now.getUTCDate()-offset)).toISOString().slice(0,10);
-   const dayRows=neuronRecords.filter(record=>String(record.ChargePeriodStart||"").slice(0,10)===date);
-   const neurons=dayRows.reduce((sum,record)=>sum+Number(record.ConsumedQuantity||record.PricingQuantity||0),0);
-   days.push({date,neurons,reported:dayRows.length>0});
+  const v2Status=v2.response.status,v2Reason=apiError(v2.payload);
+  if(v2Status===401||v2Status===403){
+   const info=await cfGet("/accounts/"+encodeURIComponent(cfAccountId)+"/billable-usage/info");
+   if(!info.response.ok||info.payload.success===false){
+    const detail=apiError(info.payload);
+    const tokenCheck=await cfGet("/user/tokens/verify").catch(()=>null);
+    const verified=!!(tokenCheck?.response?.ok&&tokenCheck?.payload?.success!==false&&tokenCheck?.payload?.result?.status==="active");
+    return json({configured:true,available:false,status:info.response.status,reason_code:info.response.status===401||info.response.status===403?"billing_permission_denied":"billing_info_unavailable",reason:"Cloudflare rejected the token on both the usage endpoint and the billing-info endpoint. "+detail,diagnostics:{usage_v2_status:v2Status,usage_v2_error:v2Reason,billing_info_status:info.response.status,token_valid:verified?true:(tokenCheck?.response?.ok?false:null)},checked_at:now.toISOString()});
+   }
+   const infoResult=info.payload.result||{},subscriptions=Array.isArray(infoResult.subscriptions)?infoResult.subscriptions:[];
+   if(infoResult.covered===false){
+    return json({configured:true,available:false,status:403,reason_code:"account_not_covered",reason:"The token can read billing information, but Cloudflare reports this account is not covered by the Billable Usage service. Cloudflare documents this service for eligible Pay-as-you-go accounts; this account cannot use the restricted daily usage endpoint.",diagnostics:{usage_v2_status:v2Status,billing_info_access:true,account_covered:false,active_subscriptions:subscriptions.length},checked_at:now.toISOString()});
+   }
+   return json({configured:true,available:false,status:v2Status,reason_code:"usage_endpoint_restricted",reason:"The token can read billing information, but Cloudflare still denies the restricted Billable Usage v2 endpoint. Billing Read is present; this is an endpoint/account eligibility restriction, not a missing Worker secret.",diagnostics:{usage_v2_status:v2Status,billing_info_access:true,account_covered:infoResult.covered??null,active_subscriptions:subscriptions.length},checked_at:now.toISOString()});
   }
-  const todayData=days[days.length-1],limit=10000;
-  const nextReset=new Date(Date.UTC(now.getUTCFullYear(),now.getUTCMonth(),now.getUTCDate()+1)).toISOString();
-  return json({
-   configured:true,available:true,reported:todayData.reported,
-   account_id:cfAccountId,
-   used_neurons:todayData.reported?todayData.neurons:null,
-   daily_free_limit:limit,
-   remaining_neurons:todayData.reported?Math.max(0,limit-todayData.neurons):null,
-   usage_percent:todayData.reported?Math.round(todayData.neurons/limit*1000)/10:null,
-   over_free_limit:todayData.reported&&todayData.neurons>limit,
-   reset_at:nextReset,reset_timezone:"UTC",
-   checked_at:now.toISOString(),days,
-   metrics:aiRecords.map(record=>({
-    name:record.x_BillableMetricName||record.ChargeDescription||record.x_BillableMetricId||"Workers AI",
-    unit:record.ConsumedUnit||record.PricingUnit||"—",
-    quantity:Number(record.ConsumedQuantity||record.PricingQuantity||0),
-    date:String(record.ChargePeriodStart||"").slice(0,10),
-    metric_id:record.x_BillableMetricId||""
-   })).slice(0,50),
-   source:"Cloudflare Billable Usage API v2"
-  });
+  return json({configured:true,available:false,status:v2Status,reason_code:"usage_api_failed",reason:v2Reason,checked_at:now.toISOString()});
  }catch(error){
   console.error("Cloudflare usage check failed:",error?.message||error);
-  return json({configured:true,available:false,reason:"Could not contact Cloudflare Billable Usage API."});
+  return json({configured:true,available:false,reason_code:"usage_api_network_error",reason:"Could not contact Cloudflare Billable Usage API.",checked_at:now.toISOString()});
  }
 }
 if(path==="/admin/system"&&method==="GET"){
