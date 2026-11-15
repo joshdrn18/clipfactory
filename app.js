@@ -9,6 +9,7 @@ function parseRetryFileKey(key){
  if(end<0||middle<0)return null;
  return {name:String(key).slice(0,middle),size:Number(String(key).slice(middle+1,end)),lastModified:Number(String(key).slice(end+1))};
 }
+function retryStoredFileName(name){return (String(name||"video.mp4").replace(/[^a-zA-Z0-9._-]/g,"_").slice(-120)||"video.mp4")}
 function openRetryFilesDb(){
  if(!("indexedDB" in window))return Promise.reject(new Error("This browser does not support local file recovery."));
  if(retryFilesDbPromise)return retryFilesDbPromise;
@@ -98,7 +99,7 @@ async function restoreRetrySourcesFromCloud(button){
    let file=null;
    try{file=await readRetrySourceFile(key)}catch(error){}
    if(!file&&entry.sourceUploaded){
-    const asset=assets.find(item=>item.kind==="source"&&item.file_name===parsed.name&&Number(item.size_bytes)===parsed.size);
+    const storedName=retryStoredFileName(parsed.name),asset=assets.find(item=>item.kind==="source"&&item.file_name===storedName&&Number(item.size_bytes)===parsed.size);
     if(asset){
      button.textContent="Downloading "+parsed.name+"…";
      const response=await fetch(apiBase()+"/api/media/"+encodeURIComponent(asset.id)+"/download",{headers:{Authorization:"Bearer "+state.token}});
