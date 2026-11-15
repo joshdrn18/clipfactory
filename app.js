@@ -1139,8 +1139,12 @@ async function loadAdmin(tab){
   }else if(state.adminTab==="cloudflare"){
    const d=await api("/admin/cloudflare/usage");
    if(!d.configured||!d.available){
+    const code=d.reason_code||"usage_unavailable";
+    const title=code==="account_not_covered"?"Cloudflare account is not eligible":code==="billing_permission_denied"?"Billing permission was rejected":code==="usage_endpoint_restricted"?"Cloudflare usage endpoint is restricted":"Cloudflare usage unavailable";
     const detail=d.reason||"The Cloudflare usage service is not available.";
-    root.innerHTML='<div class="notice"><strong>Cloudflare usage unavailable</strong><p>'+escapeHtml(detail)+'</p><small>Confirm the CF_API_TOKEN secret is configured on clipfactory-api and has Billing Read access.</small></div>';
+    const labels={usage_v2_status:"Billable Usage v2 HTTP status",usage_v2_error:"Billable Usage v2 response",billing_info_status:"Billing Info HTTP status",token_valid:"Token status",billing_info_access:"Billing Info access",account_covered:"Account covered",active_subscriptions:"Active subscriptions"};
+    const diagnosticRows=Object.entries(d.diagnostics||{}).map(([key,value])=>'<div class="admin-row"><span>'+escapeHtml(labels[key]||key.replace(/_/g," "))+'</span><strong>'+escapeHtml(value===null?"Not available":String(value))+'</strong></div>').join("");
+    root.innerHTML='<section class="cf-usage-panel"><div class="admin-section-intro"><strong>'+escapeHtml(title)+'</strong><span>Worker secret: '+(d.configured?"Detected":"Missing")+'</span></div><p>'+escapeHtml(detail)+'</p>'+(d.status?'<small>HTTP '+fmt(d.status)+'</small>':'')+(diagnosticRows?'<div class="cf-diagnostics">'+diagnosticRows+'</div>':'')+'<div class="notice">The API token value stays private. Do not paste it into chat or the browser.</div></section>';
    }else{
     const used=d.reported?Number(d.used_neurons||0):null;
     const limit=Number(d.daily_free_limit||10000);
