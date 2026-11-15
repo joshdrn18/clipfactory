@@ -325,31 +325,87 @@ async function readVideoDuration(file,timeoutMs=15000){
 }
 let engineProgressValue=0,ffmpegProgressBase=15,ffmpegProgressSpan=75;
 function engineProgress(label,pct,reset=false,hint=""){if(reset)engineProgressValue=0;engineProgressValue=Math.max(engineProgressValue,Math.max(0,Math.min(100,Number(pct)||0)));$("engineProgress").hidden=false;$("engineStatus").textContent=label;$("enginePercent").textContent=Math.round(engineProgressValue)+"%";$("engineProgressBar").style.width=engineProgressValue+"%";const detail=$("engineHint");if(detail)detail.textContent=hint||"Your completed exports are saved automatically as each file finishes."}
+function createFFmpegRuntime(FFmpeg){
+ const ffmpeg=new FFmpeg();
+ ffmpeg.__clipFactoryLogs=[];
+ ffmpeg.__lastProgressAt=Date.now();
+ ffmpeg.__operationLabel="Rendering video";
+ ffmpeg.on("log",({message})=>{
+  ffmpeg.__lastProgressAt=Date.now();
+  ffmpeg.__clipFactoryLogs.push(String(message));
+  if(ffmpeg.__clipFactoryLogs.length>80)ffmpeg.__clipFactoryLogs.shift();
+ });
+ ffmpeg.on("progress",({progress})=>{
+  ffmpeg.__lastProgressAt=Date.now();
+  const modeHint=ffmpeg.__clipFactoryMultiThreaded
+   ?"Multi-thread encoding is active ("+ffmpeg.__clipFactoryThreadCount+" CPU threads)."
+   :"Compatibility encoding is active on this browser.";
+  engineProgress(ffmpeg.__operationLabel,ffmpegProgressBase+Math.max(0,Math.min(1,Number(progress)||0))*ffmpegProgressSpan,false,modeHint+" Progress can pause briefly on complex video frames.");
+ });
+ return ffmpeg;
+}
+async function fetchFFmpegBlobURL(url,contentType){
+ const response=await fetch(url,{mode:"cors",cache:"force-cache"});
+ if(!response.ok)throw new Error("Could not download FFmpeg engine asset ("+response.status+").");
+ return URL.createObjectURL(new Blob([await response.arrayBuffer()],{type:contentType}));
+}
+function releaseFFmpegBlobURLs(ffmpeg){
+ for(const url of ffmpeg?.__clipFactoryBlobURLs||[]){try{URL.revokeObjectURL(url)}catch(error){}}
+ if(ffmpeg)ffmpeg.__clipFactoryBlobURLs=[];
+}
+async function loadFFmpegRuntime(ffmpeg,config){
+ let loadTimer;
+ try{
+  await Promise.race([
+   ffmpeg.load(config),
+   new Promise((_,reject)=>{loadTimer=setTimeout(()=>reject(new Error("Video engine could not finish loading within 2 minutes.")),2*60*1000)})
+  ]);
+ }finally{clearTimeout(loadTimer)}
+}
 async function getFFmpeg(){
  if(state.ffmpeg)return state.ffmpeg;
  engineProgress("Loading video engine…",2,false,"Preparing the browser-based FFmpeg engine. Keep this tab open while processing.");
  const {FFmpeg}=await Promise.race([import("https://esm.sh/@ffmpeg/ffmpeg@0.12.15"),new Promise((_,reject)=>setTimeout(()=>reject(new Error("Video engine package did not load within 60 seconds. Check your connection and retry.")),60000))]);
- const ffmpeg=new FFmpeg();
- ffmpeg.__clipFactoryLogs=[];
- ffmpeg.on("log",({message})=>{ffmpeg.__lastProgressAt=Date.now();ffmpeg.__clipFactoryLogs.push(String(message));if(ffmpeg.__clipFactoryLogs.length>80)ffmpeg.__clipFactoryLogs.shift();});
- ffmpeg.__lastProgressAt=Date.now();ffmpeg.__operationLabel="Rendering video";
- ffmpeg.on("progress",({progress})=>{ffmpeg.__lastProgressAt=Date.now();engineProgress(ffmpeg.__operationLabel,ffmpegProgressBase+Math.max(0,Math.min(1,Number(progress)||0))*ffmpegProgressSpan,false,"FFmpeg is actively processing. Progress can pause briefly on complex video frames.")});
  const assetBase=window.location.origin+"/ffmpeg/";
- let loadTimer;
- try{
-  await Promise.race([
-   ffmpeg.load({
-    classWorkerURL:assetBase+"worker.js",
-    coreURL:"https://unpkg.com/@ffmpeg/core@0.12.10/dist/esm/ffmpeg-core.js",
-    wasmURL:"https://unpkg.com/@ffmpeg/core@0.12.10/dist/esm/ffmpeg-core.wasm"
-   }),
-   new Promise((_,reject)=>{loadTimer=setTimeout(()=>{
-    try{ffmpeg.terminate()}catch(e){}
-    reject(new Error("Video engine could not finish loading within 2 minutes. Check your connection and retry."));
-   },2*60*1000)})
-  ]);
- }finally{clearTimeout(loadTimer)}
- state.ffmpeg=ffmpeg;return ffmpeg;
+ const cpuThreads=Number(navigator.hardwareConcurrency)||0;
+ const canUseMultiThread=window.crossOriginIsolated===true&&typeof SharedArrayBuffer==="function"&&cpuThreads>=4;
+ if(canUseMultiThread){
+  const ffmpeg=createFFmpegRuntime(FFmpeg),blobUrls=[];
+  const threadCount=Math.max(2,Math.min(4,cpuThreads-1));
+  ffmpeg.__clipFactoryMultiThreaded=true;
+  ffmpeg.__clipFactoryThreadCount=threadCount;
+  try{
+   engineProgress("Preparing multi-threaded video engine…",2,false,"Enabling parallel H.264 encoding for supported browsers.");
+   const baseURL="https://cdn.jsdelivr.net/npm/@ffmpeg/core-mt@0.12.10/dist/esm";
+   const coreURL=await fetchFFmpegBlobURL(baseURL+"/ffmpeg-core.js","text/javascript");
+   blobUrls.push(coreURL);
+   const wasmURL=await fetchFFmpegBlobURL(baseURL+"/ffmpeg-core.wasm","application/wasm");
+   blobUrls.push(wasmURL);
+   const workerURL=await fetchFFmpegBlobURL(baseURL+"/ffmpeg-core.worker.js","text/javascript");
+   blobUrls.push(workerURL);
+   await loadFFmpegRuntime(ffmpeg,{classWorkerURL:assetBase+"worker.js",coreURL,wasmURL,workerURL});
+   ffmpeg.__clipFactoryBlobURLs=blobUrls;
+   state.ffmpeg=ffmpeg;
+   engineProgress("Multi-threaded video engine ready",3,false,"Parallel H.264 encoding is enabled with up to "+threadCount+" CPU threads.");
+   return ffmpeg;
+  }catch(error){
+   try{ffmpeg.terminate()}catch(terminateError){}
+   for(const url of blobUrls){try{URL.revokeObjectURL(url)}catch(revokeError){}}
+   console.warn("ClipFactory multi-threaded FFmpeg unavailable; using compatibility engine:",error);
+   engineProgress("Using compatibility video engine…",2,false,"Multi-thread mode is unavailable in this browser or network. Switching to the safe single-thread engine.");
+  }
+ }
+ const ffmpeg=createFFmpegRuntime(FFmpeg);
+ ffmpeg.__clipFactoryMultiThreaded=false;
+ ffmpeg.__clipFactoryThreadCount=1;
+ await loadFFmpegRuntime(ffmpeg,{
+  classWorkerURL:assetBase+"worker.js",
+  coreURL:"https://unpkg.com/@ffmpeg/core@0.12.10/dist/esm/ffmpeg-core.js",
+  wasmURL:"https://unpkg.com/@ffmpeg/core@0.12.10/dist/esm/ffmpeg-core.wasm"
+ });
+ state.ffmpeg=ffmpeg;
+ engineProgress("Video engine ready",3,false,"Compatibility encoding is ready. Your completed exports will still save one by one.");
+ return ffmpeg;
 }
 async function execFFmpegWithTimeout(ffmpeg,args,timeoutMs=60*60*1000,stallTimeoutMs=15*60*1000){
   let timer,watchdog,rejectSafety;
@@ -358,6 +414,7 @@ async function execFFmpegWithTimeout(ffmpeg,args,timeoutMs=60*60*1000,stallTimeo
     if(stopped)return;
     stopped=true;
     try{ffmpeg.terminate()}catch(error){console.warn("ClipFactory FFmpeg worker reset:",error)}
+    releaseFFmpegBlobURLs(ffmpeg);
     if(state.ffmpeg===ffmpeg)state.ffmpeg=null;
   };
   const safetyStop=new Promise((_,reject)=>{rejectSafety=reject});
@@ -842,7 +899,7 @@ async function burnSubtitleExport(){
   tempInput="./subtitle-burn-"+Date.now()+".webm";tempOutput="./"+file.name.replace(/\.[^.]+$/,"")+"_subtitled.mp4";
   await ffmpeg.writeFile(tempInput,inputBytes);
   ffmpeg.__clipFactoryLogs=[];
-  const code=await execFFmpegWithTimeout(ffmpeg,["-i",tempInput,"-map","0:v:0","-map","0:a?","-c:v","libx264","-preset","ultrafast","-threads","1","-crf","25","-pix_fmt","yuv420p","-c:a","aac","-b:a","160k","-movflags","+faststart",tempOutput],30*60*1000,8*60*1000);
+  const code=await execFFmpegWithTimeout(ffmpeg,["-i",tempInput,"-map","0:v:0","-map","0:a?","-c:v","libx264","-preset","ultrafast","-threads",String(ffmpeg.__clipFactoryThreadCount||1),"-crf","25","-pix_fmt","yuv420p","-c:a","aac","-b:a","160k","-movflags","+faststart",tempOutput],30*60*1000,8*60*1000);
   if(code!==0)throw new Error("MP4 encoding failed. Check FFmpeg logs and retry.");
   const durationCheck=await verifySubtitleMp4Duration(ffmpeg,tempOutput,recording.sourceDuration);
   if(recording.audioTrackCount>0&&!/Audio:\s*aac\b/i.test(durationCheck.probeLog))throw new Error("The source audio track was detected, but the finished MP4 does not contain a confirmed AAC audio stream. The export was not saved.");
@@ -1152,7 +1209,7 @@ $("createBatch").onclick=async()=>{
      else args.push("-map","0:v:0","-map","0:a?");
      const ffmpegOutput="./"+output;
      temporaryFFmpegFiles.add(ffmpegOutput);
-     args.push("-c:v","libx264","-preset","ultrafast","-threads","1","-crf",workflow==="compress"?"30":"25","-pix_fmt","yuv420p","-c:a","aac","-b:a","160k","-movflags","+faststart",ffmpegOutput);
+     args.push("-c:v","libx264","-preset","ultrafast","-threads",String(ffmpeg.__clipFactoryThreadCount||1),"-crf",workflow==="compress"?"30":"25","-pix_fmt","yuv420p","-c:a","aac","-b:a","160k","-movflags","+faststart",ffmpegOutput);
      const taskProgressSpan=75/totalTasks;ffmpegProgressBase=15+(completedTasks/totalTasks)*75;ffmpegProgressSpan=taskProgressSpan*0.8;
      ffmpeg.__operationLabel="Rendering "+output;
      engineProgress("Rendering "+output,ffmpegProgressBase,false,"Output "+(si+1)+" of "+segments+" for "+file.name+". This stage uses browser processing and may take time.");
