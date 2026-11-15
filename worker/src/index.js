@@ -383,7 +383,11 @@ if(path==="/admin/cloudflare/usage"&&method==="GET"){
     body:JSON.stringify({query})
    });
    const analytics=await analyticsResponse.json().catch(()=>({}));
-   const analyticsErrors=Array.isArray(analytics.errors)?analytics.errors.map(error=>error.message||"GraphQL query failed").join("; "):"";
+   const analyticsErrorObjects=Array.isArray(analytics.errors)?analytics.errors:[];
+   const analyticsErrors=analyticsErrorObjects.map(error=>error.message||"GraphQL query failed").join("; ");
+   const analyticsErrorPaths=analyticsErrorObjects.map(error=>Array.isArray(error.path)?error.path.join("."):"").filter(Boolean);
+   const tokenVerify=await cfGet("/user/tokens/verify").catch(()=>null);
+   const tokenActive=!!(tokenVerify?.response?.ok&&tokenVerify?.payload?.success!==false&&tokenVerify?.payload?.result?.status==="active");
    const accountRows=analytics?.data?.viewer?.accounts;
    const groups=Array.isArray(accountRows?.[0]?.aiInferenceAdaptiveGroups)?accountRows[0].aiInferenceAdaptiveGroups:null;
    if(analyticsResponse.ok&&!analyticsErrors&&groups){
@@ -411,9 +415,9 @@ if(path==="/admin/cloudflare/usage"&&method==="GET"){
    const analyticsReason=analyticsErrors||(!analyticsResponse.ok?apiError(analytics):(!Array.isArray(accountRows)||!accountRows.length?"Cloudflare GraphQL returned no account data.":"The Workers AI analytics dataset was not returned."));
    const permissionDenied=/auth|permission|not authorized|forbidden|denied/i.test(analyticsReason)||analyticsStatus===401||analyticsStatus===403;
    const reason=permissionDenied
-    ?"Billable Usage v2 is restricted, and the V1 billing feed cannot provide the free-tier daily Neurons counter. Cloudflare also rejected the GraphQL analytics query. Edit the existing API token and add Account > Account Analytics > Read, then retry. No second token is needed."
+    ?"Billable Usage v2 is restricted. GraphQL returned an account authorization error. Check BOTH token settings: Account > Account Analytics > Read, and Account Resources must include this ClipFactory account ("+cfAccountId+"). The Worker secret is present, but that alone does not verify its permissions. Make sure the token whose policy you edited is the exact token stored in CF_API_TOKEN. No second token is needed if you correct that token's policy."
     :"Cloudflare could not return Workers AI analytics: "+analyticsReason;
-   return json({configured:true,available:false,status:analyticsStatus,reason_code:permissionDenied?"analytics_permission_denied":"analytics_query_failed",reason,diagnostics:{usage_v2_status:v2Status,usage_v2_error:v2Reason,analytics_http_status:analyticsStatus,analytics_error:analyticsReason,required_permission:"Account > Account Analytics > Read"},checked_at:now.toISOString()});
+   return json({configured:true,available:false,status:analyticsStatus,reason_code:permissionDenied?"analytics_permission_denied":"analytics_query_failed",reason,diagnostics:{usage_v2_status:v2Status,usage_v2_error:v2Reason,analytics_http_status:analyticsStatus,analytics_error:analyticsReason,analytics_error_path:analyticsErrorPaths.join(", ")||null,token_valid:tokenVerify?tokenActive:null,required_permission:"Account > Account Analytics > Read",required_account_resource:cfAccountId,required_account_resource_scope:"Include this account or all accounts"},checked_at:now.toISOString()});
   }
   return json({configured:true,available:false,status:v2Status,reason_code:"usage_api_failed",reason:v2Reason,checked_at:now.toISOString()});
  }catch(error){
