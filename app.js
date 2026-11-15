@@ -99,10 +99,10 @@ $("videoLibrary").onclick=async e=>{
  const preview=e.target.closest("[data-video-preview]"),download=e.target.closest("[data-video-download]"),rename=e.target.closest("[data-video-rename]"),del=e.target.closest("[data-video-delete]");
  try{
   if(preview){const id=preview.dataset.videoPreview,box=$("video-preview-"+id),original=preview.textContent;preview.disabled=true;preview.textContent="Loading preview…";try{const response=await fetch(apiBase()+"/api/videos/"+encodeURIComponent(id)+"/file",{headers:{Authorization:"Bearer "+state.token}});if(!response.ok)throw new Error("Preview failed · HTTP "+response.status);const blob=await response.blob(),url=URL.createObjectURL(blob);state.videoPreviewUrls.push(url);box.innerHTML='<video controls autoplay playsinline preload="metadata" aria-label="Video preview"></video>';box.querySelector("video").src=url}catch(error){if(preview.isConnected){preview.disabled=false;preview.textContent="↻ Retry preview"}throw error}}
-  if(download){const id=download.dataset.videoDownload;const response=await fetch(apiBase()+"/api/videos/"+encodeURIComponent(id)+"/download",{headers:{Authorization:"Bearer "+state.token}});if(!response.ok)throw new Error("Download failed");const blob=await response.blob(),url=URL.createObjectURL(blob),link=document.createElement("a");link.href=url;link.download=download.dataset.name;document.body.appendChild(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),1000)}
+  if(download){const id=download.dataset.videoDownload;download.disabled=true;const oldLabel=download.textContent;download.textContent="Preparing…";const response=await fetch(apiBase()+"/api/videos/"+encodeURIComponent(id)+"/download",{headers:{Authorization:"Bearer "+state.token}});if(!response.ok)throw new Error("Download failed");const blob=await response.blob(),url=URL.createObjectURL(blob),link=document.createElement("a");link.href=url;link.download=download.dataset.name;document.body.appendChild(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);download.disabled=false;download.textContent=oldLabel}
   if(rename){const next=prompt("New video filename:",rename.dataset.name);if(!next||!next.trim()||next.trim()===rename.dataset.name)return;await api("/videos/"+encodeURIComponent(rename.dataset.videoRename),{method:"PUT",body:JSON.stringify({file_name:next.trim()})});toast("Video renamed.");await loadVideos()}
   if(del){if(!confirm("Permanently delete this finished video from your library?"))return;await api("/videos/"+encodeURIComponent(del.dataset.videoDelete),{method:"DELETE"});toast("Video deleted.");await loadVideos()}
- }catch(err){toast(err.message||"Video action failed.")}
+ }catch(err){if(download?.isConnected){download.disabled=false;download.textContent="Download"}toast(err.message||"Video action failed.")}
 };
 
 function escapeHtml(s){return String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
@@ -1082,7 +1082,7 @@ $("engineResults").onclick=async e=>{
   const response=await fetch(apiBase()+"/api/media/"+b.dataset.download+"/download",{headers:{Authorization:"Bearer "+state.token}});
   if(!response.ok)throw new Error("Download failed");
   const blob=await response.blob(),url=URL.createObjectURL(blob),a=document.createElement("a");
-  a.href=url;a.download=b.dataset.name;document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url);
+  a.href=url;a.download=b.dataset.name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
  }catch(err){toast(err.message)}
 };
 $("copyGrowth").onclick=async()=>{const content=$("growthOutput").innerText.trim();if(!content||content.startsWith("Your hooks"))return;try{await navigator.clipboard.writeText(content);toast("Growth ideas copied.")}catch(e){toast("Clipboard access was blocked by your browser.")}};
