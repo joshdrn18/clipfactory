@@ -86,9 +86,10 @@ async function restoreRetryLocalFiles(){
  }
  renderRetryCheckpointNotice();
 }
-async function restoreRetrySourcesFromCloud(button){
- if(!state.retryBatch||!state.token)return;
- button.disabled=true;button.textContent="Restoring source files…";
+async function restoreRetrySourcesFromCloud(button,{silent=false}={}){
+ if(!state.retryBatch||!state.token)return false;
+ const setLabel=label=>{if(button){button.disabled=true;button.textContent=label}else if($("engineHint"))$("engineHint").textContent=label};
+ setLabel("Restoring source files…");
  try{
   const entries=Object.entries(state.retryBatch.files||{}).filter(([,entry])=>!entry.completed);
   const listing=await api("/media?project_id="+encodeURIComponent(state.retryBatch.project.id));
@@ -101,7 +102,7 @@ async function restoreRetrySourcesFromCloud(button){
    if(!file&&entry.sourceUploaded){
     const storedName=retryStoredFileName(parsed.name),asset=assets.find(item=>item.kind==="source"&&item.file_name===storedName&&Number(item.size_bytes)===parsed.size);
     if(asset){
-     button.textContent="Downloading "+parsed.name+"…";
+     setLabel("Downloading "+parsed.name+"…");
      const response=await fetch(apiBase()+"/api/media/"+encodeURIComponent(asset.id)+"/download",{headers:{Authorization:"Bearer "+state.token}});
      if(!response.ok)throw new Error("Could not restore "+parsed.name+" from cloud storage (HTTP "+response.status+").");
      const blob=await response.blob();
@@ -115,10 +116,17 @@ async function restoreRetrySourcesFromCloud(button){
   if(!restored.length)throw new Error("No uploaded source files could be restored. Re-select the original video file.");
   state.files=restored;renderSelectedFiles();applyRetrySettings();
   restored.forEach((file,index)=>{const entry=state.retryBatch.files[retryFileKey(file)];if(entry?.sourceUploaded)setUploadFileStatus(index,"Source uploaded · ready to resume",100,"uploaded");});
-  $("engineResults").innerHTML='<div class="notice">Recovered '+restored.length+' source file(s) from cloud storage.'+(missing.length?' '+missing.length+' file(s) still need to be selected again.':'')+' Press Upload & process videos to resume. Completed exports will be skipped.</div>';
-  renderRetryCheckpointNotice();toast("Interrupted batch recovered.");
- }catch(error){toast(error.message||"Could not restore interrupted batch.");button.disabled=false;button.textContent="Restore uploaded source from cloud";return}
- button.disabled=false;button.textContent="Restore uploaded source from cloud";
+  $("engineResults").innerHTML='<div class="notice">Recovered '+restored.length+' source file(s). ClipFactory will resume automatically when every pending source is available.'+(missing.length?' '+missing.length+' source file(s) still need to be selected again.':'')+' Completed exports will be skipped.</div>';
+  renderRetryCheckpointNotice();
+  if(!silent)toast("Interrupted batch recovered.");
+  return true;
+ }catch(error){
+  if(button){button.disabled=false;button.textContent="Restore uploaded source from cloud";}
+  if(!silent)toast(error.message||"Could not restore interrupted batch.");
+  return false;
+ }finally{
+  if(button){button.disabled=false;button.textContent="Restore uploaded source from cloud";}
+ }
 }
 function persistRetryBatch(){const key=retryCheckpointKey();if(!key||!state.retryBatch)return;try{localStorage.setItem(key,JSON.stringify({version:1,project:state.retryBatch.project,settings:state.retryBatch.settings,files:state.retryBatch.files,savedAt:new Date().toISOString()}));renderRetryCheckpointNotice()}catch(error){console.warn("ClipFactory retry checkpoint could not be saved:",error);toast("Retry checkpoint could not be saved in this browser. Keep this tab open until exports finish.")}}
 function restoreRetryBatch(user){const key=retryCheckpointKey(user);if(!key){state.retryBatch=null;renderRetryCheckpointNotice();return}try{const raw=localStorage.getItem(key);if(!raw){state.retryBatch=null;renderRetryCheckpointNotice();return}const saved=JSON.parse(raw);if(saved?.version!==1||!saved.project?.id||!saved.settings||!saved.files||typeof saved.files!=="object")throw new Error("Invalid checkpoint");state.retryBatch={project:saved.project,settings:saved.settings,files:saved.files};}catch(error){localStorage.removeItem(key);state.retryBatch=null;console.warn("ClipFactory retry checkpoint was discarded:",error)}renderRetryCheckpointNotice()}
@@ -126,6 +134,28 @@ function clearRetryBatch(){const batch=state.retryBatch,key=retryCheckpointKey()
 
 const $ = (id) => document.getElementById(id);
 const apiBase = () => localStorage.getItem("cf_api_url") || API_DEFAULT;
+let retryAutoResumeInFlight=false;
+function maybeAutoResumeRetryBatch(){
+ if(retryAutoResumeInFlight||!state.user||!state.retryBatch||!$("createBatch")||$("createBatch").disabled)return;
+ const batch=state.retryBatch,pending=Object.entries(batch.files||{}).filter(([,entry])=>!entry.completed);
+ if(!pending.length||!state.projects.some(project=>project.id===batch.project.id))return;
+ const selected=new Map(state.files.map(file=>[retryFileKey(file),file]));
+ if(!pending.every(([key,entry])=>entry.sourceUploaded&&selected.has(key)))return;
+ const expected={aspect:batch.settings?.aspect||"9:16",workflow:batch.settings?.workflow||"resize",clipSeconds:Number(batch.settings?.clipSeconds)||30};
+ const current={aspect:$("aspect").value,workflow:$("workflow").value,clipSeconds:Number($("clipDuration").value)};
+ if(JSON.stringify(expected)!==JSON.stringify(current))return;
+ retryAutoResumeInFlight=true;
+ $("engineResults").innerHTML='<div class="notice">The interrupted batch and its source video(s) were recovered. ClipFactory is resuming automatically; completed exports will be skipped.</div>';
+ setTimeout(()=>{
+  const stillPending=state.retryBatch&&Object.entries(state.retryBatch.files||{}).filter(([,entry])=>!entry.completed);
+  const keys=new Set(state.files.map(retryFileKey));
+  if(!state.user||!stillPending?.length||!stillPending.every(([key,entry])=>entry.sourceUploaded&&keys.has(key))||$("createBatch").disabled){
+   retryAutoResumeInFlight=false;return;
+  }
+  $("createBatch").click();
+ },650);
+}
+
 $("retryCheckpointNotice")?.addEventListener("click",event=>{const button=event.target.closest("[data-restore-retry-files]");if(button)restoreRetrySourcesFromCloud(button)});
 async function api(path, options={}) {
   const {timeoutMs,...requestOptions}=options;
@@ -153,7 +183,11 @@ document.addEventListener("keydown",e=>{if(e.key!=="Escape"||!$("sidebar").class
 function setUser(user){state.user=user;$("adminNav").hidden=user?.role!=="admin";$("profileName").textContent=user?.name||"Guest creator";$("profileEmail").textContent=user?.email||"Sign in to sync";$("avatar").textContent=(user?.name||"G").slice(0,1).toUpperCase();$("topAvatar").textContent=$("avatar").textContent;$("authButton").textContent=user?"Account":"Sign in";$("settingsAccount").textContent=user?user.name+" · "+user.email:"You are browsing as a guest. Sign in to sync your workspace.";$("logoutButton").hidden=!user}
 function updatePoints(n,unlimited=false){state.points=Number(n||0);const display=unlimited?"∞":fmt(state.points);$("sidePoints").innerHTML=display+' <small>pts</small>';$("statPoints").textContent=display;$("walletPoints").innerHTML=display+' <small>'+(unlimited?"unlimited":"pts")+'</small>';$("walletUnlimited")?.toggleAttribute("hidden",!unlimited);$("packageGrid")?.setAttribute("hidden","")}
 function updateProjectStats(){const total=state.projects.length,open=state.projects.filter(p=>!["completed","cancelled"].includes(String(p.status||"draft").toLowerCase())).length;$("statProjects").textContent=String(total);$("statQueue").textContent=String(open)}
-async function refresh({strict=false}={}){if(!state.token){state.projects=[];setUser(null);updatePoints(0);updateProjectStats();$("statExports").textContent="0";$("recentProjects").textContent="Sign in to see your recent projects.";return null}try{const d=await api("/me");if(!d?.user?.id)throw new Error("Your session was accepted, but the account profile could not be loaded. Please try again.");setUser(d.user);restoreRetryBatch(d.user);applyRetrySettings();await restoreRetryLocalFiles();updatePoints(d.wallet?.balance,d.wallet?.unlimited||d.user?.role==="admin");state.projects=d.projects||[];updateProjectStats();renderProjects();$("recentProjects").innerHTML=state.projects.slice(0,4).map(projectRow).join("")||"No projects yet — create your first batch.";try{const videos=await api("/videos");$("statExports").textContent=fmt(videos.count??videos.videos?.length??0)}catch(e){$("statExports").textContent="—"}return d.user}catch(e){if(e.message==="Please sign in."){state.token="";localStorage.removeItem("cf_token");state.projects=[];state.retryBatch=null;renderRetryCheckpointNotice();setUser(null);updateProjectStats();renderProjects();$("recentProjects").textContent="Sign in to see your recent projects.";$("statExports").textContent="0"}else{$("statExports").textContent="—"}if(strict)throw e;toast(e.message||"Could not refresh workspace.");return null}}
+async function refresh({strict=false}={}){if(!state.token){state.projects=[];setUser(null);updatePoints(0);updateProjectStats();$("statExports").textContent="0";$("recentProjects").textContent="Sign in to see your recent projects.";return null}try{const d=await api("/me");if(!d?.user?.id)throw new Error("Your session was accepted, but the account profile could not be loaded. Please try again.");setUser(d.user);restoreRetryBatch(d.user);applyRetrySettings();await restoreRetryLocalFiles();
+const pendingRetry=Object.entries(state.retryBatch?.files||{}).filter(([,entry])=>!entry.completed);
+const localRetryKeys=new Set(state.files.map(retryFileKey));
+if(pendingRetry.some(([key,entry])=>entry.sourceUploaded&&!localRetryKeys.has(key)))await restoreRetrySourcesFromCloud(null,{silent:true});
+updatePoints(d.wallet?.balance,d.wallet?.unlimited||d.user?.role==="admin");state.projects=d.projects||[];updateProjectStats();renderProjects();$("recentProjects").innerHTML=state.projects.slice(0,4).map(projectRow).join("")||"No projects yet — create your first batch.";maybeAutoResumeRetryBatch();try{const videos=await api("/videos");$("statExports").textContent=fmt(videos.count??videos.videos?.length??0)}catch(e){$("statExports").textContent="—"}return d.user}catch(e){if(e.message==="Please sign in."){state.token="";localStorage.removeItem("cf_token");state.projects=[];state.retryBatch=null;renderRetryCheckpointNotice();setUser(null);updateProjectStats();renderProjects();$("recentProjects").textContent="Sign in to see your recent projects.";$("statExports").textContent="0"}else{$("statExports").textContent="—"}if(strict)throw e;toast(e.message||"Could not refresh workspace.");return null}}
 function projectRow(p){const draft=String(p.status||"draft").toLowerCase()==="draft";const status=String(p.status||"Draft");const updated=p.updated_at||p.created_at;return '<div class="project-row"><span class="project-name-cell"><strong>'+escapeHtml(p.name||"Untitled project")+'</strong><small>'+escapeHtml(p.kind||"Video")+' · Created '+(p.created_at?new Date(p.created_at).toLocaleString(): "—")+'</small></span><span>'+escapeHtml(p.kind||"Video")+'</span><span><i class="status-pill">'+escapeHtml(status)+'</i></span><span>'+(updated?new Date(updated).toLocaleString(): "—")+(draft?' <button class="admin-action danger" data-delete-project="'+escapeHtml(p.id)+'" title="Delete draft project">Delete</button>':'')+'</span></div>'}
 document.addEventListener("click",async e=>{const b=e.target.closest("[data-delete-project]");if(!b)return;const id=b.dataset.deleteProject;const project=state.projects.find(p=>p.id===id);if(!project)return;if(String(project.status||"draft").toLowerCase()!=="draft"){toast("Only draft projects can be deleted.");return}if(!confirm('Delete draft project "'+project.name+'"? Its uploaded source files will be deleted, but finished videos stay in My Videos. Points already used will not be refunded.'))return;b.disabled=true;try{await api("/projects/"+encodeURIComponent(id),{method:"DELETE"});state.projects=state.projects.filter(p=>p.id!==id);updateProjectStats();$("recentProjects").innerHTML=state.projects.slice(0,4).map(projectRow).join("")||"No projects yet — create your first batch.";renderProjects();toast("Draft project deleted.");}catch(err){b.disabled=false;toast(err.message||"Could not delete project.");}});
 $("projectSearch")?.addEventListener("input",renderProjects);$("projectStatusFilter")?.addEventListener("change",renderProjects);$("projectSort")?.addEventListener("change",renderProjects);$("clearProjectFilters")?.addEventListener("click",()=>{$("projectSearch").value="";$("projectStatusFilter").value="all";$("projectSort").value="newest";renderProjects()});
@@ -1214,6 +1248,7 @@ $("createBatch").onclick=async()=>{
   $("engineResults").innerHTML='<div class="notice">Processing error: '+escapeHtml(detail)+'</div>';
  }
  finally{
+  retryAutoResumeInFlight=false;
   if(activeFFmpeg){for(const tempFile of temporaryFFmpegFiles){try{await activeFFmpeg.deleteFile(tempFile)}catch(cleanupError){console.warn("ClipFactory temporary-file cleanup:",tempFile,cleanupError)}}}
   temporaryFFmpegFiles.clear();$("createBatch").disabled=!state.files.length
  }
