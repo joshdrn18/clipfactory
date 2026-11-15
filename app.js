@@ -1253,7 +1253,7 @@ $("createBatch").onclick=async()=>{
     // Remove incomplete temporary outputs before resetting the worker. Saved cloud exports are untouched.
     for(const tempFile of [...temporaryFFmpegFiles]){try{await ffmpeg.deleteFile(tempFile)}catch(cleanupError){console.warn("ClipFactory failed-file cleanup:",tempFile,cleanupError)}temporaryFFmpegFiles.delete(tempFile);}
     // Isolate failures: a broken FFmpeg worker must not poison the next file.
-    if(engineUsed&&state.ffmpeg===ffmpeg){try{ffmpeg.terminate()}catch(engineError){console.warn("ClipFactory engine reset:",engineError)}state.ffmpeg=null;}
+    if(engineUsed&&state.ffmpeg===ffmpeg){try{ffmpeg.terminate()}catch(engineError){console.warn("ClipFactory engine reset:",engineError)}releaseFFmpegBlobURLs(ffmpeg);state.ffmpeg=null;}
    }finally{
     if(input){
      try{await ffmpeg.deleteFile(input)}catch(cleanupError){console.warn("ClipFactory input cleanup:",input,cleanupError)}
@@ -1265,6 +1265,7 @@ $("createBatch").onclick=async()=>{
    if(file.size>=128*1024*1024&&state.ffmpeg===ffmpeg){
     engineProgress("Releasing video memory…",engineProgressValue,false,"Resetting FFmpeg after a large source before the next file.");
     try{ffmpeg.terminate()}catch(engineError){console.warn("ClipFactory large-file memory reset:",engineError)}
+    releaseFFmpegBlobURLs(ffmpeg);
     state.ffmpeg=null;
     activeFFmpeg=null;
    }
