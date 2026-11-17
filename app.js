@@ -297,7 +297,7 @@ async function loadVideos(){
   $("videoCount").textContent=fmt(videos.length);$("videoStorage").textContent=formatBytes(data.storage_bytes);
   if(!videos.length){root.classList.add("empty-state");root.innerHTML='<div class="empty-state">No finished videos yet. Completed exports will appear here automatically.</div>';return}
   root.classList.remove("empty-state");
-  root.innerHTML='<div class="batch-publish-toolbar"><div class="batch-publish-heading"><strong>Clip Workspace</strong><small>Select clips to download or prepare one metadata bundle.</small></div><label class="batch-publish-select-all"><input type="checkbox" data-publish-batch-select-all> Select all</label><span class="batch-publish-count" data-publish-batch-count>0 selected</span><button type="button" class="admin-action" data-publish-batch-action="videos">Download selected clips</button><button type="button" class="admin-action" data-publish-batch-action="copy">Copy metadata</button><button type="button" class="admin-action" data-publish-batch-action="download">Download metadata</button></div><div class="video-grid">'+videos.map(v=>{
+  root.innerHTML='<div class="batch-publish-toolbar"><div class="batch-publish-heading"><strong>Clip Workspace</strong><small>Select clips to download or prepare one metadata bundle.</small></div><label class="batch-publish-select-all"><input type="checkbox" data-publish-batch-select-all> Select all</label><span class="batch-publish-count" data-publish-batch-count>0 selected</span><button type="button" class="admin-action" data-publish-batch-action="zip">Download ZIP</button><button type="button" class="admin-action" data-publish-batch-action="videos">Download individually</button><button type="button" class="admin-action" data-publish-batch-action="copy">Copy metadata</button><button type="button" class="admin-action" data-publish-batch-action="download">Download metadata</button><small class="clip-zip-status" data-clip-zip-status aria-live="polite"></small></div><div class="video-grid">'+videos.map(v=>{
    const meta=getVideoPublishMetadata(v);
    return '<article class="video-card"><label class="batch-publish-item"><input type="checkbox" data-publish-batch-select value="'+escapeHtml(v.id)+'"><span>Select clip</span></label><div class="video-preview" id="video-preview-'+escapeHtml(v.id)+'"><button class="video-preview-load" data-video-preview="'+escapeHtml(v.id)+'">▶ Load preview</button></div><div class="video-card-body"><strong class="video-name">'+escapeHtml(v.file_name)+'</strong><small>'+escapeHtml(v.project_name||"Original project unavailable")+' · '+formatBytes(v.size_bytes)+' · '+new Date(v.created_at).toLocaleDateString()+'</small><div class="video-card-actions"><button class="admin-action" data-video-download="'+escapeHtml(v.id)+'" data-name="'+escapeHtml(v.file_name)+'">Download</button><button class="admin-action" data-video-rename="'+escapeHtml(v.id)+'" data-name="'+escapeHtml(v.file_name)+'">Rename</button><button class="admin-action danger" data-video-delete="'+escapeHtml(v.id)+'">Delete</button></div>'+renderVideoPublishKit(v,meta)+'</div></article>';
   }).join("")+'</div>';
@@ -322,6 +322,70 @@ $("videoLibrary").onclick=async e=>{
  if(batchAction){
   const selected=[...$("videoLibrary").querySelectorAll("[data-publish-batch-select]:checked")];
   if(!selected.length){toast("Select at least one video for the batch.");return}
+  if(batchAction.dataset.publishBatchAction==="zip"){
+   const items=selected.map(check=>{const card=check.closest(".video-card"),button=card?.querySelector("[data-video-download]");return {id:check.value,name:button?.dataset.name||"clip.mp4"}});
+   if(typeof window.showSaveFilePicker!=="function"){toast("Your browser does not support streaming ZIP saves. Use Download individually instead.");return}
+   const oldLabel=batchAction.textContent,status=$("videoLibrary").querySelector("[data-clip-zip-status]");
+   let writable=null,completed=false;
+   const setStatus=message=>{if(status)status.textContent=message};
+   batchAction.disabled=true;
+   try{
+    // Open the save picker from the click gesture before any other await.
+    const handlePromise=window.showSaveFilePicker({suggestedName:"clipfactory-selected-clips.zip",types:[{description:"ZIP archive",accept:{"application/zip":[".zip"]}}]});
+    const handle=await handlePromise;
+    writable=await handle.createWritable();
+    batchAction.textContent="Loading ZIP engine…";
+    const {Zip,ZipPassThrough}=await import("https://esm.sh/fflate@0.8.2");
+    let writeChain=Promise.resolve(),zipError=null;
+    const zip=new Zip((error,chunk)=>{
+     if(error){zipError=error;return}
+     if(chunk&&chunk.byteLength)writeChain=writeChain.then(()=>writable.write(chunk)).catch(writeError=>{zipError=writeError});
+    });
+    const usedNames=new Set();
+    const uniqueName=(raw,index)=>{
+     let name=String(raw||"clip-"+(index+1)+".mp4").replace(/[\\/:*?"<>|\u0000-\u001f]/g,"-").replace(/^\.+/,"").slice(0,170)||("clip-"+(index+1)+".mp4");
+     const dot=name.lastIndexOf("."),stem=dot>0?name.slice(0,dot):name,ext=dot>0?name.slice(dot):"";
+     let candidate=name,suffix=2;
+     while(usedNames.has(candidate.toLowerCase()))candidate=stem+"-"+suffix+++ext;
+     usedNames.add(candidate.toLowerCase());return candidate;
+    };
+    for(let index=0;index<items.length;index++){
+     const item=items[index];
+     batchAction.textContent="Packing "+(index+1)+"/"+items.length;
+     setStatus("Adding "+item.name+" · "+(index+1)+" of "+items.length);
+     const response=await fetch(apiBase()+"/api/videos/"+encodeURIComponent(item.id)+"/download",{headers:{Authorization:"Bearer "+state.token}});
+     if(!response.ok)throw new Error("Could not download "+item.name+" (HTTP "+response.status+").");
+     const entry=new ZipPassThrough(uniqueName(item.name,index));zip.add(entry);
+     if(response.body&&typeof response.body.getReader==="function"){
+      const reader=response.body.getReader();
+      try{
+       while(true){
+        const part=await reader.read();
+        if(part.done){entry.push(new Uint8Array(0),true);break}
+        if(part.value?.byteLength)entry.push(part.value,false);
+        await writeChain;
+        if(zipError)throw zipError;
+       }
+      }finally{try{reader.releaseLock()}catch(readerError){}}
+     }else{
+      const bytes=new Uint8Array(await response.arrayBuffer());entry.push(bytes,true);
+      await writeChain;if(zipError)throw zipError;
+     }
+     await writeChain;if(zipError)throw zipError;
+    }
+    zip.end();
+    await writeChain;
+    if(zipError)throw zipError;
+    await writable.close();completed=true;
+    setStatus(items.length+" clips packed into ZIP.");
+    toast("ZIP archive saved · "+items.length+" clips.");
+   }catch(error){
+    if(writable&&!completed){try{await writable.abort(error)}catch(abortError){}}
+    if(error?.name==="AbortError"){setStatus("ZIP download canceled.");toast("ZIP download canceled.");}
+    else{setStatus("ZIP failed: "+(error?.message||"Unknown error"));toast(error?.message||"Could not create ZIP archive.");}
+   }finally{batchAction.disabled=false;batchAction.textContent=oldLabel}
+   return;
+  }
   if(batchAction.dataset.publishBatchAction==="videos"){
    const items=selected.map(check=>{const card=check.closest(".video-card"),button=card?.querySelector("[data-video-download]");return {id:check.value,name:button?.dataset.name||"clip.mp4"}});
    const oldLabel=batchAction.textContent;let started=0;batchAction.disabled=true;batchAction.textContent="Preparing downloads…";
