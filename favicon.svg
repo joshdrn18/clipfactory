@@ -1,25 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96">
-  <defs>
-    <linearGradient id="bg" x1="8" y1="6" x2="88" y2="92" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#766878"/>
-      <stop offset="1" stop-color="#584E5D"/>
-    </linearGradient>
-    <linearGradient id="film" x1="23" y1="23" x2="74" y2="75" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#C5CABB"/>
-      <stop offset=".55" stop-color="#A9B6A7"/>
-      <stop offset="1" stop-color="#829688"/>
-    </linearGradient>
-    <linearGradient id="play" x1="39" y1="37" x2="61" y2="62" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#FFF9EF"/>
-      <stop offset="1" stop-color="#E6DCCB"/>
-    </linearGradient>
-  </defs>
-  <rect width="96" height="96" rx="27" fill="url(#bg)"/>
-  <rect x="3.5" y="3.5" width="89" height="89" rx="24" fill="none" stroke="#D8CBB8" stroke-opacity=".34"/>
-  <path d="M25 28.5 32.5 19h42L67 28.5H25Z" fill="#D8C8AE"/>
-  <path d="m34 19-7.5 9.5m22-9.5L41 28.5m22-9.5-7.5 9.5" stroke="#665969" stroke-opacity=".58" stroke-width="3.4"/>
-  <rect x="22" y="28" width="52" height="46" rx="9" fill="url(#film)"/>
-  <path d="M31.5 29v44M64.5 29v44" stroke="#5B6C61" stroke-opacity=".48" stroke-width="2.6" stroke-dasharray="3.2 4.2"/>
-  <path d="m40 39 19 12-19 12V39Z" fill="url(#play)"/>
-  <path d="m76 11 2.2 5.8L84 19l-5.8 2.2L76 27l-2.2-5.8L68 19l5.8-2.2L76 11Z" fill="#E0CDAE"/>
+  <defs><linearGradient id="plum" x1="10" y1="5" x2="87" y2="93" gradientUnits="userSpaceOnUse"><stop stop-color="#6D606E"/><stop offset="1" stop-color="#514652"/></linearGradient></defs>
+  <rect x="1" y="1" width="94" height="94" rx="27" fill="url(#plum)"/>
+  <rect x="5" y="5" width="86" height="86" rx="23" fill="none" stroke="#D8C8AE" stroke-opacity=".32"/>
+  <text x="7" y="67" fill="#E5D6BD" font-family="Georgia, 'Times New Roman', serif" font-size="62" font-weight="400">C</text>
+  <text x="48" y="67" fill="#E5D6BD" font-family="Georgia, 'Times New Roman', serif" font-size="59" font-weight="400">F</text>
 </svg>

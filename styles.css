@@ -1413,3 +1413,32 @@ option:checked{
 
 /* Brand mark shadow tuned for the Mushroom & Plum identity */
 .brand-mark{filter:drop-shadow(0 5px 10px rgba(79,64,82,.17))}
+
+/* Minimalist luxury typography for the refreshed CF monogram */
+.brand{
+ gap:10px;
+ color:#39342f;
+ font-family:Georgia,"Times New Roman",serif;
+ font-size:21px;
+ font-weight:600;
+ letter-spacing:-.65px;
+}
+.brand-mark{
+ width:42px;
+ height:42px;
+ flex:0 0 42px;
+ border-radius:13px;
+ filter:none;
+}
+.brand-light{
+ color:#796782;
+ font-style:italic;
+ font-weight:400;
+}
+.brand small{
+ color:#766d64;
+ font-family:"DM Sans",sans-serif;
+ font-size:7.5px;
+ font-weight:700;
+ letter-spacing:1.9px;
+}
