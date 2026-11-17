@@ -1345,8 +1345,8 @@ $("createBatch").onclick=async()=>{
      if(useFastCopy)args.push("-c","copy","-avoid_negative_ts","make_zero","-movflags","+faststart",ffmpegOutput);
      else args.push("-c:v","libx264","-preset","ultrafast","-threads",String(ffmpeg.__clipFactoryThreadCount||1),"-crf",workflow==="compress"?"30":"25","-pix_fmt","yuv420p","-c:a","aac","-b:a","160k","-movflags","+faststart",ffmpegOutput);
      const taskProgressSpan=75/totalTasks;ffmpegProgressBase=15+(completedTasks/totalTasks)*75;ffmpegProgressSpan=taskProgressSpan*0.8;
-     ffmpeg.__operationLabel="Rendering "+output;
-     engineProgress("Rendering "+output,ffmpegProgressBase,false,"Output "+(si+1)+" of "+segments+" for "+file.name+". This stage uses browser processing and may take time.");
+     ffmpeg.__operationLabel=(useFastCopy?"Quick-splitting ":"Rendering ")+output;
+     engineProgress((useFastCopy?"Quick-splitting ":"Rendering ")+output,ffmpegProgressBase,false,useFastCopy?"Copying compatible streams without video re-encoding.":"Output "+(si+1)+" of "+segments+" for "+file.name+". This stage uses browser processing and may take time.");
      // Keep this render's diagnostics separate from earlier inputs/outputs.
      ffmpeg.__clipFactoryLogs.length=0;
      const code=await execFFmpegWithTimeout(ffmpeg,args);
