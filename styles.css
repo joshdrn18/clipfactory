@@ -960,3 +960,24 @@ label{gap:8px;color:#bfc8d8;font-size:11px;font-weight:650}
  .mobile-menu{width:36px;height:36px;display:grid;place-items:center;border:1px solid rgba(160,174,207,.14);border-radius:10px;background:rgba(255,255,255,.035);color:#e3e8f4;font-size:17px}
  .mobile-menu:hover{border-color:rgba(163,143,255,.34);background:rgba(143,121,233,.1)}
 }
+
+
+/* Per-video Publish Kit */
+.publish-kit{margin-top:7px;padding-top:10px;border-top:1px solid rgba(255,255,255,.07);color:#e8ebf5}
+.publish-kit>summary{display:flex;align-items:center;justify-content:space-between;gap:10px;cursor:pointer;list-style:none;padding:7px 2px}
+.publish-kit>summary::-webkit-details-marker{display:none}
+.publish-kit>summary>span{display:grid;gap:3px}
+.publish-kit>summary strong{font-size:11px;color:#e5ddff}
+.publish-kit>summary small{font-size:9px;color:#8490a6}
+.publish-kit>summary i{font-style:normal;color:#b6a2ff;font-size:15px;transition:transform .18s}
+.publish-kit[open]>summary i{transform:rotate(45deg)}
+.publish-kit-body{display:grid;gap:10px;padding-top:10px}
+.publish-field{display:grid;gap:5px;min-width:0;color:#9ea9bd;font-size:10px;font-weight:600}
+.publish-field input,.publish-field textarea,.publish-field select{width:100%;min-width:0;box-sizing:border-box;border:1px solid rgba(145,158,184,.22);border-radius:8px;background:#0d1420;color:#e7ebf5;padding:9px 10px;font:500 11px/1.5 "DM Sans",sans-serif;outline:none}
+.publish-field input:focus,.publish-field textarea:focus,.publish-field select:focus{border-color:#8d78d9;box-shadow:0 0 0 2px rgba(141,120,217,.12)}
+.publish-field textarea{resize:vertical;min-height:62px}
+.publish-kit-two{display:grid;grid-template-columns:1fr 1fr;gap:9px}
+.publish-kit-actions{display:flex;flex-wrap:wrap;gap:6px}
+.publish-kit-actions .admin-action{flex:1 1 30%;min-width:90px;padding:8px 7px;font-size:9px}
+.publish-kit-note{display:block;color:#79869d;font-size:9px;line-height:1.55}
+@media(max-width:600px){.publish-kit-two{grid-template-columns:1fr}.publish-kit-actions .admin-action{flex:1 1 100%}}
