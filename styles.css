@@ -1352,3 +1352,62 @@ input:focus,textarea:focus,select:focus{border-color:#96839d;box-shadow:0 0 0 3p
  background:#66576c;
  color:#fff;
 }
+
+
+/* Unified native dropdowns across every workspace page */
+select,
+.publish-field select,
+.subtitle-render-settings select,
+.project-toolbar select,
+.queue-toolbar select{
+ color-scheme:light;
+ color:#39342f;
+ background-color:#e4ded4;
+ border:1px solid #c9c0b5;
+ border-radius:10px;
+ -webkit-appearance:none;
+ appearance:none;
+ background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%23766d64' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+ background-repeat:no-repeat;
+ background-position:right 12px center;
+ background-size:14px;
+ padding-right:36px;
+}
+select:hover,
+.publish-field select:hover,
+.subtitle-render-settings select:hover,
+.project-toolbar select:hover,
+.queue-toolbar select:hover{
+ background-color:#e8e2d9;
+ border-color:#bdb3a7;
+}
+select:focus,
+.publish-field select:focus,
+.subtitle-render-settings select:focus,
+.project-toolbar select:focus,
+.queue-toolbar select:focus{
+ color:#39342f;
+ background-color:#e4ded4;
+ border-color:#96839d;
+ box-shadow:0 0 0 3px rgba(121,105,131,.12);
+ outline:0;
+}
+select:disabled{
+ color:#80776d;
+ background-color:#ddd7ce;
+ border-color:#d1c9bf;
+ opacity:.72;
+}
+select option,
+select optgroup,
+option,
+optgroup{
+ color:#39342f;
+ background-color:#e4ded4;
+}
+select option:checked,
+option:checked{
+ color:#39342f;
+ background-color:#d6cdc2;
+}
+
