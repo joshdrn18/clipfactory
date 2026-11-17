@@ -476,6 +476,7 @@ function renderSelectedFiles(){
  $("uploadSelectionSummary").textContent=state.files.length?state.files.length+" file(s) · "+(totalBytes/1048576).toFixed(1)+" MB total · "+(state.user?.role==="admin"?"Free":fmt(totalCost)+" points estimated"):"No files selected";
  $("fileList").innerHTML=state.files.map((f,i)=>'<div class="upload-file-card" data-upload-file="'+i+'"><div class="upload-file-top"><span class="upload-file-name">▣ '+escapeHtml(f.name)+'</span><span class="upload-file-size">'+(f.size/1048576).toFixed(1)+' MB</span><button type="button" class="admin-action danger" data-remove-file="'+i+'">Remove</button></div><div class="upload-file-progress"><span data-file-progress style="width:0%"></span></div><div class="upload-file-foot"><span data-file-status>Ready to upload</span><span data-file-percent>0%</span></div></div>').join("");
  $("clearFiles").hidden=!state.files.length;$("createBatch").disabled=!state.files.length;
+ updateClipPlanSummary();
 }
 function setUploadFileStatus(index,label,percent,tone){const row=$("fileList").querySelector('[data-upload-file="'+index+'"]');if(!row)return;row.querySelector("[data-file-status]").textContent=label;row.querySelector("[data-file-percent]").textContent=Math.round(percent)+"%";row.querySelector("[data-file-progress]").style.width=Math.max(0,Math.min(100,percent))+"%";row.dataset.state=tone||"active"}
 function selectFiles(list){
@@ -490,6 +491,45 @@ $("fileInput").onchange=e=>selectFiles(e.target.files);
 $("dropzone").ondragover=e=>{e.preventDefault();$("dropzone").style.borderColor="#a48aff"};
 $("dropzone").ondragleave=()=>$("dropzone").style.borderColor="";
 $("dropzone").ondrop=e=>{e.preventDefault();$("dropzone").style.borderColor="";selectFiles(e.dataTransfer.files)};
+let clipPlanGeneration=0;
+const clipDurationMemo=new Map();
+function formatClipPlanTime(seconds){
+ const total=Math.max(0,Math.round(Number(seconds)||0)),minutes=Math.floor(total/60),remainder=total%60;
+ return minutes?minutes+"m "+String(remainder).padStart(2,"0")+"s":remainder+"s";
+}
+async function updateClipPlanSummary(){
+ const panel=$("clipPlanSummary");if(!panel)return;
+ const workflow=$("workflow")?.value||"fast-clips",fixedCuts=workflow==="fast-clips"||workflow==="clips";
+ const generation=++clipPlanGeneration;
+ panel.hidden=!fixedCuts;
+ if(!fixedCuts)return;
+ const files=[...state.files];
+ if(!files.length){panel.textContent="Choose video files to preview the number of clips before processing.";return}
+ const clipSeconds=Math.max(1,Number($("clipDuration")?.value)||30);
+ const skipIntro=Math.max(0,Number($("skipIntro")?.value)||0),skipOutro=Math.max(0,Number($("skipOutro")?.value)||0);
+ panel.textContent="Checking source durations to estimate your clip plan…";
+ const durations=new Array(files.length),cursor={value:0};
+ const workers=Array.from({length:Math.min(3,files.length)},async()=>{
+  while(cursor.value<files.length){
+   const index=cursor.value++,file=files[index],key=retryFileKey(file);
+   if(clipDurationMemo.has(key)){durations[index]=clipDurationMemo.get(key);continue}
+   try{const duration=await readVideoDuration(file);clipDurationMemo.set(key,duration);durations[index]=duration}
+   catch(error){durations[index]=null}
+  }
+ });
+ await Promise.all(workers);
+ if(generation!==clipPlanGeneration)return;
+ const known=durations.filter(value=>Number.isFinite(value)&&value>0);
+ const usable=known.map(duration=>Math.max(0,duration-skipIntro-skipOutro));
+ const estimated=usable.reduce((sum,duration)=>sum+Math.ceil(duration/clipSeconds),0);
+ const usableSeconds=usable.reduce((sum,duration)=>sum+duration,0);
+ const noUsable=usable.filter(duration=>duration<=0).length;
+ const unknown=files.length-known.length;
+ let summary=files.length+" source(s) · "+estimated+" clip(s) estimated · "+formatClipPlanTime(usableSeconds)+" usable footage";
+ if(noUsable)summary+=" · "+noUsable+" source(s) fully skipped";
+ if(unknown)summary+=" · duration unavailable for "+unknown;
+ panel.textContent=summary+".";
+}
 async function readVideoDuration(file,timeoutMs=15000){
  const url=URL.createObjectURL(file),video=document.createElement("video");
  video.preload="metadata";video.muted=true;video.playsInline=true;
@@ -1709,5 +1749,8 @@ window.addEventListener("online",checkApiHealth);
 window.addEventListener("offline",()=>{const indicator=$("apiHealth");if(indicator){indicator.textContent="Network offline";indicator.classList.add("offline");indicator.classList.remove("checking")}});
 
 
-$("workflow").addEventListener("change",()=>{const selected=$("workflow").value,subtitle=selected==="subtitle",fastClips=selected==="fast-clips",clips=fastClips||selected==="clips"||selected==="highlights",fixedCuts=fastClips||selected==="clips";$("createBatch").textContent=subtitle?"Generate editable subtitles →":fastClips?"Quick split & save clips →":selected==="highlights"?"Find highlights & render clips →":selected==="clips"?"Create clips & re-encode →":selected==="compress"?"Compress videos →":"Upload & process videos →";$("clipDurationWrap").hidden=!clips;$("clipTrimControls").hidden=!fixedCuts;$("subtitle-cost-note").hidden=!subtitle;$("aspect").disabled=fastClips;$("aspectHint").hidden=!fastClips;$("workflowHint").textContent=fastClips?"Quick Split copies compatible H.264/AAC video without re-encoding for much faster cuts. Cuts may shift slightly to the nearest keyframe; other formats are converted automatically.":selected==="clips"?"Standard clip mode re-encodes each segment for precise cuts and broad compatibility.":selected==="highlights"?"AI Highlight Discovery finds distinct moments, then renders each selected segment.":subtitle?"Generate editable captions first, then review and burn them into your video.":selected==="compress"?"Compress full videos to smaller MP4 files.":"Resize full videos for your selected social format.";});
+$("workflow").addEventListener("change",()=>{const selected=$("workflow").value,subtitle=selected==="subtitle",fastClips=selected==="fast-clips",clips=fastClips||selected==="clips"||selected==="highlights",fixedCuts=fastClips||selected==="clips";$("createBatch").textContent=subtitle?"Generate editable subtitles →":fastClips?"Quick split & save clips →":selected==="highlights"?"Find highlights & render clips →":selected==="clips"?"Create clips & re-encode →":selected==="compress"?"Compress videos →":"Upload & process videos →";$("clipDurationWrap").hidden=!clips;$("clipTrimControls").hidden=!fixedCuts;$("subtitle-cost-note").hidden=!subtitle;$("aspect").disabled=fastClips;$("aspectHint").hidden=!fastClips;$("workflowHint").textContent=fastClips?"Quick Split copies compatible H.264/AAC video without re-encoding for much faster cuts. Cuts may shift slightly to the nearest keyframe; other formats are converted automatically.":selected==="clips"?"Standard clip mode re-encodes each segment for precise cuts and broad compatibility.":selected==="highlights"?"AI Highlight Discovery finds distinct moments, then renders each selected segment.":subtitle?"Generate editable captions first, then review and burn them into your video.":selected==="compress"?"Compress full videos to smaller MP4 files.":"Resize full videos for your selected social format.";updateClipPlanSummary();});
+$("clipDuration").addEventListener("change",updateClipPlanSummary);
+$("skipIntro").addEventListener("input",updateClipPlanSummary);
+$("skipOutro").addEventListener("input",updateClipPlanSummary);
 $("workflow").dispatchEvent(new Event("change"));

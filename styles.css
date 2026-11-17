@@ -1005,3 +1005,7 @@ label{gap:8px;color:#bfc8d8;font-size:11px;font-weight:650}
 .clip-trim-controls input{min-height:38px;padding:8px 10px;font-size:12px}
 .clip-trim-controls small{grid-column:1/-1;color:var(--muted);font-size:9px;line-height:1.5}
 @media(max-width:600px){.clip-trim-controls{grid-template-columns:1fr}.clip-trim-controls small{grid-column:auto}}
+
+/* Live clip plan preview */
+.clip-plan-summary{margin:0 0 14px;padding:11px 13px;border:1px solid rgba(111,211,202,.2);border-radius:10px;background:linear-gradient(135deg,rgba(24,52,57,.42),rgba(20,29,43,.76));color:#b5d9d5;font-size:10px;font-weight:650;line-height:1.55}
+.clip-plan-summary[hidden]{display:none}
