@@ -1265,7 +1265,9 @@ $("createBatch").onclick=async()=>{
  try{
   const batchSettings={aspect,workflow,clipSeconds,skipIntro,skipOutro};
   const fileKey=retryFileKey;
-  const retryFilesMatch=state.retryBatch&&JSON.stringify(state.retryBatch.settings)===JSON.stringify(batchSettings)&&files.every(file=>state.retryBatch.files[fileKey(file)]);
+  const previousSettings=state.retryBatch?.settings||{};
+  const normalizedPreviousSettings={aspect:previousSettings.aspect||"9:16",workflow:previousSettings.workflow||"resize",clipSeconds:Number(previousSettings.clipSeconds)||30,skipIntro:Number(previousSettings.skipIntro)||0,skipOutro:Number(previousSettings.skipOutro)||0};
+  const retryFilesMatch=state.retryBatch&&JSON.stringify(normalizedPreviousSettings)===JSON.stringify(batchSettings)&&files.every(file=>state.retryBatch.files[fileKey(file)]);
   let project;
   if(retryFilesMatch){
    project=state.retryBatch.project;
