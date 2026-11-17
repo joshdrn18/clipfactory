@@ -1411,3 +1411,5 @@ option:checked{
  background-color:#d6cdc2;
 }
 
+/* Brand mark shadow tuned for the Mushroom & Plum identity */
+.brand-mark{filter:drop-shadow(0 5px 10px rgba(79,64,82,.17))}

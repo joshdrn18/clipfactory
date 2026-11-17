@@ -1,3 +1,19 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="360" height="88" viewBox="0 0 360 88" fill="none">
-<defs><linearGradient id="g" x1="8" y1="5" x2="75" y2="80" gradientUnits="userSpaceOnUse"><stop stop-color="#B9A4FF"/><stop offset=".52" stop-color="#8468F5"/><stop offset="1" stop-color="#4F43C7"/></linearGradient><linearGradient id="p" x1="29" y1="25" x2="58" y2="61" gradientUnits="userSpaceOnUse"><stop stop-color="#fff"/><stop offset="1" stop-color="#DCD5FF"/></linearGradient></defs>
-<rect x="4" y="4" width="80" height="80" rx="24" fill="#17172A"/><rect x="4.75" y="4.75" width="78.5" height="78.5" rx="23.25" stroke="#B8A6FF" stroke-opacity=".24" stroke-width="1.5"/><path d="M24 4h40a20 20 0 0 1 20 20v40a20 20 0 0 1-20 20H24A20 20 0 0 1 4 64V24A20 20 0 0 1 24 4Z" fill="url(#g)" fill-opacity=".15"/><path d="M24 29.5a6.5 6.5 0 0 1 6.5-6.5h33a6.5 6.5 0 0 1 6.5 6.5v29A6.5 6.5 0 0 1 63.5 65h-33a6.5 6.5 0 0 1-6.5-6.5v-29Z" fill="url(#g)"/><path d="M31 23v42M63 23v42" stroke="#F7F5FF" stroke-opacity=".42" stroke-width="2" stroke-dasharray="3 4"/><path d="m42 35 17 9-17 9V35Z" fill="url(#p)"/><path d="m70 13 2.2 5.8L78 21l-5.8 2.2L70 29l-2.2-5.8L62 21l5.8-2.2L70 13Z" fill="#D8CEFF"/><text x="100" y="48" fill="#F7F7FC" font-family="Space Grotesk,Arial,sans-serif" font-size="31" font-weight="700" letter-spacing="-1.7">clip<tspan fill="#A99AFF">factory</tspan></text><text x="102" y="68" fill="#9299AD" font-family="Arial,sans-serif" font-size="9" font-weight="700" letter-spacing="2.6">MAKE CONTENT MOVE</text></svg>
+<svg xmlns="http://www.w3.org/2000/svg" width="420" height="96" viewBox="0 0 420 96" fill="none">
+  <defs>
+    <linearGradient id="bg" x1="6" y1="4" x2="88" y2="91" gradientUnits="userSpaceOnUse"><stop stop-color="#766878"/><stop offset="1" stop-color="#584E5D"/></linearGradient>
+    <linearGradient id="film" x1="22" y1="19" x2="75" y2="75" gradientUnits="userSpaceOnUse"><stop stop-color="#C5CABB"/><stop offset=".55" stop-color="#A9B6A7"/><stop offset="1" stop-color="#829688"/></linearGradient>
+    <linearGradient id="play" x1="39" y1="37" x2="61" y2="62" gradientUnits="userSpaceOnUse"><stop stop-color="#FFF9EF"/><stop offset="1" stop-color="#E6DCCB"/></linearGradient>
+  </defs>
+  <rect width="420" height="96" rx="17" fill="#E8E3DA"/>
+  <rect x=".5" y=".5" width="419" height="95" rx="16.5" stroke="#D2C9BD"/>
+  <rect x="8" y="8" width="80" height="80" rx="24" fill="url(#bg)"/>
+  <rect x="11.5" y="11.5" width="73" height="73" rx="21" fill="none" stroke="#D8CBB8" stroke-opacity=".34"/>
+  <path d="M30 36.5 37.5 27h42L72 36.5H30Z" fill="#D8C8AE"/>
+  <path d="m39 27-7.5 9.5m22-9.5L46 36.5m22-9.5-7.5 9.5" stroke="#665969" stroke-opacity=".58" stroke-width="3.4"/>
+  <rect x="27" y="36" width="52" height="46" rx="9" fill="url(#film)"/>
+  <path d="M36.5 37v44M69.5 37v44" stroke="#5B6C61" stroke-opacity=".48" stroke-width="2.6" stroke-dasharray="3.2 4.2"/>
+  <path d="m45 47 19 12-19 12V47Z" fill="url(#play)"/>
+  <path d="m81 19 2.2 5.8L89 27l-5.8 2.2L81 35l-2.2-5.8L73 27l5.8-2.2L81 19Z" fill="#E0CDAE"/>
+  <text x="108" y="54" fill="#39342F" font-family="Space Grotesk,Arial,sans-serif" font-size="35" font-weight="700" letter-spacing="-1.8">clip<tspan fill="#796782">factory</tspan></text>
+  <text x="111" y="75" fill="#766D64" font-family="Arial,sans-serif" font-size="9.5" font-weight="700" letter-spacing="2.8">MAKE CONTENT MOVE</text>
+</svg>
