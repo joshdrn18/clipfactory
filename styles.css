@@ -998,3 +998,10 @@ label{gap:8px;color:#bfc8d8;font-size:11px;font-weight:650}
 .field-hint{font-size:9px;color:var(--muted);font-weight:400;line-height:1.45}
 .workflow-hint{margin:-8px 0 18px;padding:11px 13px;border:1px solid rgba(145,158,184,.17);border-radius:10px;background:linear-gradient(135deg,rgba(31,39,59,.72),rgba(17,22,34,.78));color:#9ba8bd;font-size:10px;line-height:1.6}
 #workflow:focus-visible,#clipDuration:focus-visible{outline:2px solid rgba(160,137,255,.55);outline-offset:2px}
+
+/* Compact trim controls for the one-pass clipping workflow */
+.clip-trim-controls{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px 14px;margin:-5px 0 18px;padding:13px 14px;border:1px solid rgba(145,158,184,.16);border-radius:12px;background:linear-gradient(135deg,rgba(25,32,49,.82),rgba(15,20,31,.88))}
+.clip-trim-controls label{min-width:0}
+.clip-trim-controls input{min-height:38px;padding:8px 10px;font-size:12px}
+.clip-trim-controls small{grid-column:1/-1;color:var(--muted);font-size:9px;line-height:1.5}
+@media(max-width:600px){.clip-trim-controls{grid-template-columns:1fr}.clip-trim-controls small{grid-column:auto}}

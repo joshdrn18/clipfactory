@@ -52,6 +52,8 @@ function applyRetrySettings(){
  if($("aspect"))$("aspect").value=settings.aspect||"9:16";
  if($("workflow")){$("workflow").value=settings.workflow||"resize";$("workflow").dispatchEvent(new Event("change"));}
  if($("clipDuration"))$("clipDuration").value=String(settings.clipSeconds||30);
+ if($("skipIntro"))$("skipIntro").value=String(Number(settings.skipIntro)||0);
+ if($("skipOutro"))$("skipOutro").value=String(Number(settings.skipOutro)||0);
 }
 function renderRetryCheckpointNotice(){
  const notice=$("retryCheckpointNotice");if(!notice)return;
@@ -141,8 +143,8 @@ function maybeAutoResumeRetryBatch(){
  if(!pending.length||!state.projects.some(project=>project.id===batch.project.id))return;
  const selected=new Map(state.files.map(file=>[retryFileKey(file),file]));
  if(!pending.every(([key,entry])=>entry.sourceUploaded&&selected.has(key)))return;
- const expected={aspect:batch.settings?.aspect||"9:16",workflow:batch.settings?.workflow||"resize",clipSeconds:Number(batch.settings?.clipSeconds)||30};
- const current={aspect:$("aspect").value,workflow:$("workflow").value,clipSeconds:Number($("clipDuration").value)};
+ const expected={aspect:batch.settings?.aspect||"9:16",workflow:batch.settings?.workflow||"resize",clipSeconds:Number(batch.settings?.clipSeconds)||30,skipIntro:Number(batch.settings?.skipIntro)||0,skipOutro:Number(batch.settings?.skipOutro)||0};
+ const current={aspect:$("aspect").value,workflow:$("workflow").value,clipSeconds:Number($("clipDuration").value),skipIntro:Number($("skipIntro")?.value)||0,skipOutro:Number($("skipOutro")?.value)||0};
  if(JSON.stringify(expected)!==JSON.stringify(current))return;
  retryAutoResumeInFlight=true;
  $("engineResults").innerHTML='<div class="notice">The interrupted batch and its source video(s) were recovered. ClipFactory is resuming automatically; completed exports will be skipped.</div>';
@@ -1255,11 +1257,13 @@ $("createBatch").onclick=async()=>{
  if(!state.files.length)return;
  if(!state.user){openAuth();toast("Sign in to process videos.");return}
  const files=[...state.files],workflow=$("workflow").value,aspect=$("aspect").value,clipSeconds=Number($("clipDuration").value);
+ const skipIntro=workflow==="clips"||workflow==="fast-clips"?Math.min(3600,Math.max(0,Number($("skipIntro")?.value)||0)):0;
+ const skipOutro=workflow==="clips"||workflow==="fast-clips"?Math.min(3600,Math.max(0,Number($("skipOutro")?.value)||0)):0;
  if(workflow==="subtitle"){await createSubtitleBatch(files);return}
  $("createBatch").disabled=true;$("engineResults").innerHTML="";
  let activeFFmpeg=null,activeFileIndex=-1;const temporaryFFmpegFiles=new Set();
  try{
-  const batchSettings={aspect,workflow,clipSeconds};
+  const batchSettings={aspect,workflow,clipSeconds,skipIntro,skipOutro};
   const fileKey=retryFileKey;
   const retryFilesMatch=state.retryBatch&&JSON.stringify(state.retryBatch.settings)===JSON.stringify(batchSettings)&&files.every(file=>state.retryBatch.files[fileKey(file)]);
   let project;
@@ -1269,7 +1273,7 @@ $("createBatch").onclick=async()=>{
   }else{
    state.retryBatch=null;
    engineProgress("Creating project…",1,true);
-   const projectData=await api("/projects",{method:"POST",body:JSON.stringify({name:files.length+" video batch",kind:"Video processing",settings:{aspect,workflow,clipSeconds,fileNames:files.map(f=>f.name)}})});
+   const projectData=await api("/projects",{method:"POST",body:JSON.stringify({name:files.length+" video batch",kind:"Video processing",settings:{aspect,workflow,clipSeconds,skipIntro,skipOutro,fileNames:files.map(f=>f.name)}})});
    project=projectData.project;
    state.retryBatch={project,settings:batchSettings,files:{}};
    files.forEach(file=>{state.retryBatch.files[fileKey(file)]={sourceUploaded:false,savedSegments:{}};});
@@ -1286,7 +1290,7 @@ $("createBatch").onclick=async()=>{
    try{durations[mi]=await readVideoDuration(files[mi]);metadataErrors[mi]="";}
    catch(metadataError){durations[mi]=0;metadataErrors[mi]=metadataError?.message||"Could not read video metadata.";}
   }
-  const totalTasks=Math.max(1,durations.reduce((sum,d)=>sum+(d>0?((workflow==="clips"||workflow==="fast-clips")?Math.ceil(d/clipSeconds):workflow==="highlights"?Math.min(5,Math.max(1,Math.ceil(d/clipSeconds))):1):0),0));
+  const totalTasks=Math.max(1,durations.reduce((sum,d)=>sum+(d>0?((workflow==="clips"||workflow==="fast-clips")?Math.ceil(Math.max(0,d-skipIntro-skipOutro)/clipSeconds):workflow==="highlights"?Math.min(5,Math.max(1,Math.ceil(d/clipSeconds))):1):0),0));
   let completedTasks=0;
   for(let fi=0;fi<files.length;fi++){
    activeFileIndex=fi;
@@ -1327,12 +1331,15 @@ $("createBatch").onclick=async()=>{
      highlightWindows=await discoverVideoHighlights(ffmpeg,input,duration,clipSeconds,(label,hint)=>engineProgress(label,Math.max(engineProgressValue,20),false,hint));
      engineProgress("Found "+highlightWindows.length+" candidate highlights",Math.max(engineProgressValue,28),false,"Rendering the highest-scoring moments in chronological order.");
     }
-    const segments=(workflow==="clips"||workflow==="fast-clips")?Math.ceil(duration/clipSeconds):workflow==="highlights"?highlightWindows.length:1;
+    const clipMode=workflow==="clips"||workflow==="fast-clips";
+    const usableClipDuration=duration-skipIntro-skipOutro;
+    if(clipMode&&usableClipDuration<=0)throw new Error("The skip-intro and skip-outro values leave no video to split. Reduce those values and retry.");
+    const segments=clipMode?Math.ceil(usableClipDuration/clipSeconds):workflow==="highlights"?highlightWindows.length:1;
     plannedSegments=segments;
     for(let si=0;si<segments;si++){
      if(retryEntry.savedSegments[String(si)]){fileExports++;completedTasks++;continue;}
      const highlight=workflow==="highlights"?highlightWindows[si]:null;
-     const offset=workflow==="highlights"?highlight.start:(workflow==="clips"||workflow==="fast-clips")?si*clipSeconds:0,seconds=workflow==="highlights"?highlight.end-highlight.start:(workflow==="clips"||workflow==="fast-clips")?Math.min(clipSeconds,duration-offset):duration;
+     const offset=workflow==="highlights"?highlight.start:clipMode?skipIntro+si*clipSeconds:0,seconds=workflow==="highlights"?highlight.end-highlight.start:clipMode?Math.min(clipSeconds,duration-skipOutro-offset):duration;
      if(seconds<=0)continue;
      const safeTitle=highlight?highlight.title.toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"").slice(0,28):"";
      const output=base+(workflow==="highlights"?"-highlight-"+String(si+1).padStart(2,"0")+(safeTitle?"-"+safeTitle:""):(workflow==="clips"||workflow==="fast-clips")?"-clip-"+String(si+1).padStart(2,"0"):"-export")+".mp4";
@@ -1636,5 +1643,5 @@ window.addEventListener("online",checkApiHealth);
 window.addEventListener("offline",()=>{const indicator=$("apiHealth");if(indicator){indicator.textContent="Network offline";indicator.classList.add("offline");indicator.classList.remove("checking")}});
 
 
-$("workflow").addEventListener("change",()=>{const selected=$("workflow").value,subtitle=selected==="subtitle",fastClips=selected==="fast-clips",clips=fastClips||selected==="clips"||selected==="highlights";$("createBatch").textContent=subtitle?"Generate editable subtitles →":fastClips?"Quick split & save clips →":selected==="highlights"?"Find highlights & render clips →":selected==="clips"?"Create clips & re-encode →":selected==="compress"?"Compress videos →":"Upload & process videos →";$("clipDurationWrap").hidden=!clips;$("subtitle-cost-note").hidden=!subtitle;$("aspect").disabled=fastClips;$("aspectHint").hidden=!fastClips;$("workflowHint").textContent=fastClips?"Quick Split copies compatible H.264/AAC video without re-encoding for much faster cuts. Cuts may shift slightly to the nearest keyframe; other formats are converted automatically.":selected==="clips"?"Standard clip mode re-encodes each segment for precise cuts and broad compatibility.":selected==="highlights"?"AI Highlight Discovery finds distinct moments, then renders each selected segment.":subtitle?"Generate editable captions first, then review and burn them into your video.":selected==="compress"?"Compress full videos to smaller MP4 files.":"Resize full videos for your selected social format.";});
+$("workflow").addEventListener("change",()=>{const selected=$("workflow").value,subtitle=selected==="subtitle",fastClips=selected==="fast-clips",clips=fastClips||selected==="clips"||selected==="highlights",fixedCuts=fastClips||selected==="clips";$("createBatch").textContent=subtitle?"Generate editable subtitles →":fastClips?"Quick split & save clips →":selected==="highlights"?"Find highlights & render clips →":selected==="clips"?"Create clips & re-encode →":selected==="compress"?"Compress videos →":"Upload & process videos →";$("clipDurationWrap").hidden=!clips;$("clipTrimControls").hidden=!fixedCuts;$("subtitle-cost-note").hidden=!subtitle;$("aspect").disabled=fastClips;$("aspectHint").hidden=!fastClips;$("workflowHint").textContent=fastClips?"Quick Split copies compatible H.264/AAC video without re-encoding for much faster cuts. Cuts may shift slightly to the nearest keyframe; other formats are converted automatically.":selected==="clips"?"Standard clip mode re-encodes each segment for precise cuts and broad compatibility.":selected==="highlights"?"AI Highlight Discovery finds distinct moments, then renders each selected segment.":subtitle?"Generate editable captions first, then review and burn them into your video.":selected==="compress"?"Compress full videos to smaller MP4 files.":"Resize full videos for your selected social format.";});
 $("workflow").dispatchEvent(new Event("change"));
