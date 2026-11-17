@@ -248,7 +248,7 @@ function suggestPublishMetadata(fileName,platform="YouTube Shorts"){
  const keywords=[...new Set(words.filter(word=>!stop.has(word)))].slice(0,10);
  const title=(topic+(clipMatch?" | Clip "+String(Number(clipMatch[1])).padStart(2,"0"):"")).slice(0,100);
  const category=/\b(grand prix|formula ?1|f1|motorsport|racing|race|rally)\b/i.test(topic)?"Sports":/\b(game|gaming|minecraft|fortnite|roblox)\b/i.test(topic)?"Gaming":"Entertainment";
- const platformTag=platform==="TikTok"?"#TikTok":platform==="Instagram Reels"?"#Reels #InstagramReels":"#Shorts";
+ const platformTag=platform==="TikTok"?"#TikTok":platform==="Instagram Reels"?"#Reels #InstagramReels":platform==="Universal"?"":"#Shorts";
  const topicTags=keywords.slice(0,4).map(word=>"#"+word.charAt(0).toUpperCase()+word.slice(1));
  const hashtags=[...new Set((platformTag+" "+topicTags.join(" ")).split(/\s+/).filter(Boolean))].join(" ");
  return {
@@ -299,6 +299,13 @@ async function loadVideos(){
  }catch(e){root.innerHTML='<div class="notice">Could not load videos: '+escapeHtml(e.message)+'</div>'}
 }
 $("refreshVideos").onclick=loadVideos;
+$("videoLibrary").addEventListener("change",e=>{
+ const platform=e.target.closest('[data-publish-field="platform"]');if(!platform)return;
+ const details=platform.closest("[data-publish-kit]"),field=details?.querySelector('[data-publish-field="hashtags"]');if(!field)return;
+ const remaining=String(field.value||"").replace(/#(?:Shorts|TikTok|Reels|InstagramReels)\\b/gi,"").replace(/\\s+/g," ").trim();
+ const platformTags=platform.value==="TikTok"?"#TikTok":platform.value==="Instagram Reels"?"#Reels #InstagramReels":platform.value==="Universal"?"":"#Shorts";
+ field.value=[platformTags,remaining].filter(Boolean).join(" ");
+});
 $("videoLibrary").onclick=async e=>{
  const publishAction=e.target.closest("[data-publish-action]");
  if(publishAction){
