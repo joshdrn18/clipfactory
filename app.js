@@ -229,6 +229,61 @@ $("exportLibrary").onclick=async e=>{
  }catch(err){toast(err.message||"Could not download export.")}
 };
 function formatBytes(bytes){const n=Number(bytes)||0;if(n<1024*1024)return (n/1024).toFixed(0)+" KB";if(n<1024*1024*1024)return (n/1048576).toFixed(1)+" MB";return (n/1073741824).toFixed(2)+" GB"}
+
+const PUBLISH_META_PREFIX="cf_publish_metadata_v1:";
+function publishMetadataStorageKey(){
+ const identity=state.user?.id||state.user?.email||"guest";
+ return PUBLISH_META_PREFIX+String(identity).trim().toLowerCase();
+}
+function readPublishMetadataBag(){
+ try{const value=JSON.parse(localStorage.getItem(publishMetadataStorageKey())||"{}");return value&&typeof value==="object"&&!Array.isArray(value)?value:{}}
+ catch(error){console.warn("ClipFactory publish metadata could not be read:",error);return {}}
+}
+function suggestPublishMetadata(fileName,platform="YouTube Shorts"){
+ const raw=String(fileName||"Video").replace(/\.[^.]+$/,"");
+ const clipMatch=raw.match(/\b(?:clip|part)[\s_-]*0*(\d+)\s*$/i);
+ const topic=raw.replace(/[\s_-]+(?:clip|part)[\s_-]*0*\d+\s*$/i,"").replace(/[_-]+/g," ").replace(/\s+/g," ").trim()||"Video";
+ const words=topic.toLowerCase().match(/[a-z0-9]{3,}/g)||[];
+ const stop=new Set(["the","and","for","with","from","your","this","that","video","part","into","over","under","you","are","was"]);
+ const keywords=[...new Set(words.filter(word=>!stop.has(word)))].slice(0,10);
+ const title=(topic+(clipMatch?" | Clip "+String(Number(clipMatch[1])).padStart(2,"0"):"")).slice(0,100);
+ const category=/\b(grand prix|formula ?1|f1|motorsport|racing|race|rally)\b/i.test(topic)?"Sports":/\b(game|gaming|minecraft|fortnite|roblox)\b/i.test(topic)?"Gaming":"Entertainment";
+ const platformTag=platform==="TikTok"?"#TikTok":platform==="Instagram Reels"?"#Reels #InstagramReels":"#Shorts";
+ const topicTags=keywords.slice(0,4).map(word=>"#"+word.charAt(0).toUpperCase()+word.slice(1));
+ const hashtags=[...new Set((platformTag+" "+topicTags.join(" ")).split(/\s+/).filter(Boolean))].join(" ");
+ return {
+  platform,title,
+  description:"A short clip from "+topic+". Watch the moment and share your take.\n\nFollow for more clips and highlights.\n\n"+hashtags,
+  tags:[...new Set([...keywords,category.toLowerCase(),"short clips","video highlights"])].join(", "),
+  hashtags,category,language:"Not specified",
+  cta:"Follow for more clips and highlights. Subscribe for the next upload.",
+  pinnedComment:"Which moment stood out most to you? Share your pick below."
+ };
+}
+function getVideoPublishMetadata(video){
+ const bag=readPublishMetadataBag(),saved=bag[String(video.id)]||{};
+ return {...suggestPublishMetadata(video.file_name,saved.platform||"YouTube Shorts"),...saved};
+}
+function renderVideoPublishKit(video,meta){
+ const id=escapeHtml(video.id),name=escapeHtml(video.file_name||"video");
+ const field=(label,key,value,type="input",extra="")=>'<label class="publish-field"><span>'+label+'</span>'+(type==="textarea"?'<textarea data-publish-field="'+key+'" '+extra+'>'+escapeHtml(value)+'</textarea>':'<input data-publish-field="'+key+'" value="'+escapeHtml(value)+'" '+extra+'></label>');
+ const options=(items,current)=>items.map(value=>'<option value="'+escapeHtml(value)+'"'+(value===current?" selected":"")+'>'+escapeHtml(value)+'</option>').join("");
+ return '<details class="publish-kit" data-publish-kit="'+id+'" data-publish-name="'+name+'"><summary><span><strong>Publish Kit</strong><small>Title · description · tags · hashtags</small></span><i>＋</i></summary><div class="publish-kit-body"><label class="publish-field"><span>Target platform</span><select data-publish-field="platform">'+options(["YouTube Shorts","TikTok","Instagram Reels","Universal"],meta.platform)+'</select></label>'+field("Title","title",meta.title,"input",'maxlength="100"')+field("Description","description",meta.description,"textarea",'rows="4" maxlength="5000"')+field("Tags / keywords · comma separated","tags",meta.tags,"textarea",'rows="3" maxlength="2000"')+field("Hashtags · include #","hashtags",meta.hashtags,"textarea",'rows="2" maxlength="1200"')+'<div class="publish-kit-two">'+field("Category","category",meta.category,"input",'maxlength="80"')+field("Language","language",meta.language,"input",'maxlength="40"')+'</div>'+field("Call to action","cta",meta.cta,"input",'maxlength="240"')+field("Pinned comment","pinnedComment",meta.pinnedComment,"textarea",'rows="2" maxlength="500"')+'<div class="publish-kit-actions"><button type="button" class="admin-action" data-publish-action="save">Save draft</button><button type="button" class="admin-action" data-publish-action="copy">Copy all metadata</button><button type="button" class="admin-action" data-publish-action="download">Download .txt</button></div><small class="publish-kit-note">Tags are searchable keywords; hashtags are for the caption. Drafts are saved in this browser only.</small></div></details>';
+}
+function collectPublishMetadata(details){
+ const result={};
+ details.querySelectorAll("[data-publish-field]").forEach(el=>{result[el.dataset.publishField]=String(el.value||"").trim()});
+ return result;
+}
+function formatPublishMetadata(meta){
+ return ["PLATFORM: "+(meta.platform||""),"TITLE: "+(meta.title||""),"DESCRIPTION:\n"+(meta.description||""),"TAGS: "+(meta.tags||""),"HASHTAGS: "+(meta.hashtags||""),"CATEGORY: "+(meta.category||""),"LANGUAGE: "+(meta.language||""),"CALL TO ACTION: "+(meta.cta||""),"PINNED COMMENT: "+(meta.pinnedComment||"")].join("\n\n");
+}
+function savePublishMetadata(videoId,meta){
+ const bag=readPublishMetadataBag();bag[String(videoId)]=meta;
+ try{localStorage.setItem(publishMetadataStorageKey(),JSON.stringify(bag))}
+ catch(error){throw new Error("Could not save this metadata draft in browser storage. Check available site storage and try again.")}
+}
+
 async function loadVideos(){
  const root=$("videoLibrary");if(!state.user){root.innerHTML="Sign in to view your finished videos.";return}
  (state.videoPreviewUrls||[]).forEach(url=>URL.revokeObjectURL(url));state.videoPreviewUrls=[];
@@ -237,11 +292,32 @@ async function loadVideos(){
   const data=await api("/videos");const videos=data.videos||[];
   $("videoCount").textContent=fmt(videos.length);$("videoStorage").textContent=formatBytes(data.storage_bytes);
   if(!videos.length){root.innerHTML='<div class="empty-state">No finished videos yet. Completed exports will appear here automatically.</div>';return}
-  root.innerHTML='<div class="video-grid">'+videos.map(v=>'<article class="video-card"><div class="video-preview" id="video-preview-'+escapeHtml(v.id)+'"><button class="video-preview-load" data-video-preview="'+escapeHtml(v.id)+'">▶ Load preview</button></div><div class="video-card-body"><strong class="video-name">'+escapeHtml(v.file_name)+'</strong><small>'+escapeHtml(v.project_name||"Original project unavailable")+' · '+formatBytes(v.size_bytes)+' · '+new Date(v.created_at).toLocaleDateString()+'</small><div class="video-card-actions"><button class="admin-action" data-video-download="'+escapeHtml(v.id)+'" data-name="'+escapeHtml(v.file_name)+'">Download</button><button class="admin-action" data-video-rename="'+escapeHtml(v.id)+'" data-name="'+escapeHtml(v.file_name)+'">Rename</button><button class="admin-action danger" data-video-delete="'+escapeHtml(v.id)+'">Delete</button></div></div></article>').join("")+'</div>';
+  root.innerHTML='<div class="video-grid">'+videos.map(v=>{
+   const meta=getVideoPublishMetadata(v);
+   return '<article class="video-card"><div class="video-preview" id="video-preview-'+escapeHtml(v.id)+'"><button class="video-preview-load" data-video-preview="'+escapeHtml(v.id)+'">▶ Load preview</button></div><div class="video-card-body"><strong class="video-name">'+escapeHtml(v.file_name)+'</strong><small>'+escapeHtml(v.project_name||"Original project unavailable")+' · '+formatBytes(v.size_bytes)+' · '+new Date(v.created_at).toLocaleDateString()+'</small><div class="video-card-actions"><button class="admin-action" data-video-download="'+escapeHtml(v.id)+'" data-name="'+escapeHtml(v.file_name)+'">Download</button><button class="admin-action" data-video-rename="'+escapeHtml(v.id)+'" data-name="'+escapeHtml(v.file_name)+'">Rename</button><button class="admin-action danger" data-video-delete="'+escapeHtml(v.id)+'">Delete</button></div>'+renderVideoPublishKit(v,meta)+'</div></article>';
+  }).join("")+'</div>';
  }catch(e){root.innerHTML='<div class="notice">Could not load videos: '+escapeHtml(e.message)+'</div>'}
 }
 $("refreshVideos").onclick=loadVideos;
 $("videoLibrary").onclick=async e=>{
+ const publishAction=e.target.closest("[data-publish-action]");
+ if(publishAction){
+  const details=publishAction.closest("[data-publish-kit]");if(!details)return;
+  const meta=collectPublishMetadata(details),videoId=details.dataset.publishKit,action=publishAction.dataset.publishAction;
+  try{
+   if(!meta.title){toast("Add a title before saving metadata.");return}
+   savePublishMetadata(videoId,meta);
+   if(action==="save"){toast("Publish metadata draft saved.");return}
+   const payload=formatPublishMetadata(meta);
+   if(action==="copy"){await navigator.clipboard.writeText(payload);toast("All publish metadata copied.");return}
+   if(action==="download"){
+    const blob=new Blob([payload],{type:"text/plain;charset=utf-8"}),url=URL.createObjectURL(blob),link=document.createElement("a");
+    const base=(details.dataset.publishName||"video").replace(/\.[^.]+$/,"").replace(/[^a-z0-9_-]+/gi,"-").slice(0,80)||"video";
+    link.href=url;link.download=base+"-metadata.txt";document.body.appendChild(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);toast("Metadata file downloaded.");return;
+   }
+  }catch(error){toast(error.message||"Publish metadata action failed.")}
+  return;
+ }
  const preview=e.target.closest("[data-video-preview]"),download=e.target.closest("[data-video-download]"),rename=e.target.closest("[data-video-rename]"),del=e.target.closest("[data-video-delete]");
  try{
   if(preview){const id=preview.dataset.videoPreview,box=$("video-preview-"+id),original=preview.textContent;preview.disabled=true;preview.textContent="Loading preview…";try{const response=await fetch(apiBase()+"/api/videos/"+encodeURIComponent(id)+"/file",{headers:{Authorization:"Bearer "+state.token}});if(!response.ok)throw new Error("Preview failed · HTTP "+response.status);const blob=await response.blob(),url=URL.createObjectURL(blob);state.videoPreviewUrls.push(url);box.innerHTML='<video controls autoplay playsinline preload="metadata" aria-label="Video preview"></video>';box.querySelector("video").src=url}catch(error){if(preview.isConnected){preview.disabled=false;preview.textContent="↻ Retry preview"}throw error}}
