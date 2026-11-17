@@ -1242,3 +1242,113 @@ input:focus,textarea:focus,select:focus{border-color:#96839d;box-shadow:0 0 0 3p
  body:has(.sidebar.open) .main:before{background:rgba(43,37,32,.25)}
  .mobile-menu{background:#e7e1d8;border-color:#d2cabe;color:#514a43}
 }
+
+
+/* ==========================================================
+   PAGE-SPECIFIC CLEANUP — OVERVIEW & MY VIDEOS
+   Overrides legacy ID-level styles that were still winning.
+   ========================================================== */
+
+/* Overview hero, stat tiles, action tiles and recent-project table */
+#view-overview .welcome-row{
+ border-color:#d2c7bb;
+ background:linear-gradient(118deg,#ddd5c9,#e4ddd3 56%,#e0dad2);
+ box-shadow:0 10px 24px rgba(70,57,43,.065),inset 0 1px 0 rgba(255,255,255,.22);
+}
+#view-overview .welcome-row:after{
+ border-color:rgba(121,101,132,.13);
+ box-shadow:0 0 0 28px rgba(121,101,132,.022),0 0 0 58px rgba(121,101,132,.014);
+}
+#view-overview .stat-card{
+ border-color:#d6cec2;
+ background:linear-gradient(145deg,#efebe3,#e9e4db);
+ box-shadow:0 6px 17px rgba(62,52,42,.045);
+}
+#view-overview .stat-card:after{
+ background:rgba(139,117,94,.035);
+ filter:none;
+}
+#view-overview .stat-card:hover{
+ border-color:#c7bdaf;
+ box-shadow:0 9px 21px rgba(62,52,42,.075);
+}
+#view-overview .action-card{
+ border-color:#d6cec2;
+ background:linear-gradient(145deg,#efebe3,#e9e4db);
+ box-shadow:0 5px 16px rgba(62,52,42,.045);
+}
+#view-overview .action-card:hover{
+ border-color:#c7bdaf;
+ background:linear-gradient(145deg,#e9e4db,#e4ded5);
+ box-shadow:0 9px 21px rgba(62,52,42,.075);
+}
+#view-overview .action-icon{
+ border-color:rgba(89,75,61,.12);
+}
+#view-overview .table-card{
+ border-color:#d6cec2;
+ background:linear-gradient(145deg,#efebe3,#e9e4db);
+ box-shadow:0 5px 16px rgba(62,52,42,.045);
+}
+#view-overview .table-head{
+ color:#766e64;
+ background:#e2dcd2;
+ border-bottom-color:#d4ccc0;
+}
+#view-overview #recentProjects .project-row{
+ color:#5e574f;
+ border-bottom-color:#ddd6cc;
+}
+#view-overview #recentProjects .project-row:hover{
+ background:#e6e0d7;
+}
+
+/* My Videos summary tiles, clip cards and controls */
+#view-videos .video-library-summary>div{
+ border-color:#d6cec2;
+ background:linear-gradient(145deg,#efebe3,#e9e4db);
+ box-shadow:0 5px 16px rgba(62,52,42,.045);
+}
+#view-videos .video-library-summary>div:after{
+ background:rgba(139,117,94,.045);
+}
+#view-videos .video-library-summary strong{
+ color:#39342f;
+}
+#view-videos .video-card{
+ border-color:#d6cec2;
+ background:linear-gradient(145deg,#efebe3,#e9e4db);
+ box-shadow:0 6px 18px rgba(62,52,42,.05);
+}
+#view-videos .video-card:hover{
+ border-color:#c7bdaf;
+ box-shadow:0 9px 21px rgba(62,52,42,.075);
+}
+#view-videos .video-card-body{
+ background:transparent;
+}
+#view-videos .video-card-body>strong{
+ color:#39342f;
+}
+#view-videos .video-card-body>small{
+ color:#766d64;
+}
+#view-videos .video-card-actions{
+ border-top-color:#d9d1c7;
+}
+#view-videos .video-card-actions .danger{
+ color:#995b55;
+}
+#view-videos .video-preview{
+ background:radial-gradient(ellipse at center,#26242b,#171717 76%);
+}
+#view-videos .video-preview-load{
+ border-color:rgba(198,180,207,.55);
+ background:rgba(87,70,97,.82);
+ color:#fff;
+}
+#view-videos .video-preview-load:hover{
+ border-color:#9c8ba2;
+ background:#66576c;
+ color:#fff;
+}
