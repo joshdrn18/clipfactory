@@ -93,6 +93,8 @@ if(method==="GET"&&path==="/points/packages"){const {results}=await env.DB.prepa
   }
   return json({ok:true});
  }
+// All routes below this point require an authenticated session.
+if(!user)return fail("Please sign in.",401);
 if(path==="/auth/password"&&method==="POST"){
  const b=await body(req),currentPassword=String(b.current_password||""),newPassword=String(b.new_password||"");
  if(newPassword.length<8||newPassword.length>128)return fail("New password must be between 8 and 128 characters.");
