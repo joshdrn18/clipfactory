@@ -295,9 +295,9 @@ async function loadVideos(){
   $("videoCount").textContent=fmt(videos.length);$("videoStorage").textContent=formatBytes(data.storage_bytes);
   if(!videos.length){root.classList.add("empty-state");root.innerHTML='<div class="empty-state">No finished videos yet. Completed exports will appear here automatically.</div>';return}
   root.classList.remove("empty-state");
-  root.innerHTML='<div class="batch-publish-toolbar"><div class="batch-publish-heading"><strong>Batch Publish Kit</strong><small>Select clips and prepare one metadata bundle.</small></div><label class="batch-publish-select-all"><input type="checkbox" data-publish-batch-select-all> Select all</label><span class="batch-publish-count" data-publish-batch-count>0 selected</span><button type="button" class="admin-action" data-publish-batch-action="copy">Copy bundle</button><button type="button" class="admin-action" data-publish-batch-action="download">Download bundle</button></div><div class="video-grid">'+videos.map(v=>{
+  root.innerHTML='<div class="batch-publish-toolbar"><div class="batch-publish-heading"><strong>Clip Workspace</strong><small>Select clips to download or prepare one metadata bundle.</small></div><label class="batch-publish-select-all"><input type="checkbox" data-publish-batch-select-all> Select all</label><span class="batch-publish-count" data-publish-batch-count>0 selected</span><button type="button" class="admin-action" data-publish-batch-action="videos">Download selected clips</button><button type="button" class="admin-action" data-publish-batch-action="copy">Copy metadata</button><button type="button" class="admin-action" data-publish-batch-action="download">Download metadata</button></div><div class="video-grid">'+videos.map(v=>{
    const meta=getVideoPublishMetadata(v);
-   return '<article class="video-card"><label class="batch-publish-item"><input type="checkbox" data-publish-batch-select value="'+escapeHtml(v.id)+'"><span>Add to batch</span></label><div class="video-preview" id="video-preview-'+escapeHtml(v.id)+'"><button class="video-preview-load" data-video-preview="'+escapeHtml(v.id)+'">▶ Load preview</button></div><div class="video-card-body"><strong class="video-name">'+escapeHtml(v.file_name)+'</strong><small>'+escapeHtml(v.project_name||"Original project unavailable")+' · '+formatBytes(v.size_bytes)+' · '+new Date(v.created_at).toLocaleDateString()+'</small><div class="video-card-actions"><button class="admin-action" data-video-download="'+escapeHtml(v.id)+'" data-name="'+escapeHtml(v.file_name)+'">Download</button><button class="admin-action" data-video-rename="'+escapeHtml(v.id)+'" data-name="'+escapeHtml(v.file_name)+'">Rename</button><button class="admin-action danger" data-video-delete="'+escapeHtml(v.id)+'">Delete</button></div>'+renderVideoPublishKit(v,meta)+'</div></article>';
+   return '<article class="video-card"><label class="batch-publish-item"><input type="checkbox" data-publish-batch-select value="'+escapeHtml(v.id)+'"><span>Select clip</span></label><div class="video-preview" id="video-preview-'+escapeHtml(v.id)+'"><button class="video-preview-load" data-video-preview="'+escapeHtml(v.id)+'">▶ Load preview</button></div><div class="video-card-body"><strong class="video-name">'+escapeHtml(v.file_name)+'</strong><small>'+escapeHtml(v.project_name||"Original project unavailable")+' · '+formatBytes(v.size_bytes)+' · '+new Date(v.created_at).toLocaleDateString()+'</small><div class="video-card-actions"><button class="admin-action" data-video-download="'+escapeHtml(v.id)+'" data-name="'+escapeHtml(v.file_name)+'">Download</button><button class="admin-action" data-video-rename="'+escapeHtml(v.id)+'" data-name="'+escapeHtml(v.file_name)+'">Rename</button><button class="admin-action danger" data-video-delete="'+escapeHtml(v.id)+'">Delete</button></div>'+renderVideoPublishKit(v,meta)+'</div></article>';
   }).join("")+'</div>';
  }catch(e){root.classList.add("empty-state");root.innerHTML='<div class="notice">Could not load videos: '+escapeHtml(e.message)+'</div>'}
 }
@@ -320,6 +320,21 @@ $("videoLibrary").onclick=async e=>{
  if(batchAction){
   const selected=[...$("videoLibrary").querySelectorAll("[data-publish-batch-select]:checked")];
   if(!selected.length){toast("Select at least one video for the batch.");return}
+  if(batchAction.dataset.publishBatchAction==="videos"){
+   const items=selected.map(check=>{const card=check.closest(".video-card"),button=card?.querySelector("[data-video-download]");return {id:check.value,name:button?.dataset.name||"clip.mp4"}});
+   const oldLabel=batchAction.textContent;let started=0;batchAction.disabled=true;batchAction.textContent="Preparing downloads…";
+   try{
+    for(const item of items){
+     const response=await fetch(apiBase()+"/api/videos/"+encodeURIComponent(item.id)+"/download",{headers:{Authorization:"Bearer "+state.token}});
+     if(!response.ok)throw new Error("Could not download "+item.name+" (HTTP "+response.status+").");
+     const blob=await response.blob(),url=URL.createObjectURL(blob),link=document.createElement("a");link.href=url;link.download=item.name;document.body.appendChild(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);started++;
+     if(started<items.length)await new Promise(resolve=>setTimeout(resolve,450));
+    }
+    toast(started+" clip downloads started. Allow multiple downloads in your browser if prompted.");
+   }catch(error){toast(started+" of "+items.length+" downloads started. "+(error.message||"The next download failed."));}
+   finally{batchAction.disabled=false;batchAction.textContent=oldLabel}
+   return;
+  }
   try{
    const entries=selected.map(check=>{
     const card=check.closest(".video-card"),details=card?.querySelector("[data-publish-kit]");
@@ -1271,7 +1286,7 @@ $("createBatch").onclick=async()=>{
    try{durations[mi]=await readVideoDuration(files[mi]);metadataErrors[mi]="";}
    catch(metadataError){durations[mi]=0;metadataErrors[mi]=metadataError?.message||"Could not read video metadata.";}
   }
-  const totalTasks=Math.max(1,durations.reduce((sum,d)=>sum+(d>0?(workflow==="clips"?Math.ceil(d/clipSeconds):workflow==="highlights"?Math.min(5,Math.max(1,Math.ceil(d/clipSeconds))):1):0),0));
+  const totalTasks=Math.max(1,durations.reduce((sum,d)=>sum+(d>0?((workflow==="clips"||workflow==="fast-clips")?Math.ceil(d/clipSeconds):workflow==="highlights"?Math.min(5,Math.max(1,Math.ceil(d/clipSeconds))):1):0),0));
   let completedTasks=0;
   for(let fi=0;fi<files.length;fi++){
    activeFileIndex=fi;
@@ -1304,27 +1319,31 @@ $("createBatch").onclick=async()=>{
     const sourceProbeLog=await probeMediaLog(ffmpeg,input);
     if(!/Video:/i.test(sourceProbeLog))throw new Error("The source file does not contain a readable video stream.");
     const sourceHasAudio=/Audio:/i.test(sourceProbeLog);
+    const sourceSupportsFastSplit=/Video:\s*h264/i.test(sourceProbeLog)&&(!sourceHasAudio||/Audio:\s*aac\b/i.test(sourceProbeLog));
+    if(workflow==="fast-clips"&&!sourceSupportsFastSplit)engineProgress("Preparing compatible MP4 cuts…",18,false,"This source uses a codec that needs conversion. ClipFactory will convert it into a compatible H.264/AAC output.");
     let highlightWindows=[];
     if(workflow==="highlights"){
      engineProgress("Finding the strongest moments…",18,false,"AI is transcribing the source and ranking distinct moments from the spoken content.");
      highlightWindows=await discoverVideoHighlights(ffmpeg,input,duration,clipSeconds,(label,hint)=>engineProgress(label,Math.max(engineProgressValue,20),false,hint));
      engineProgress("Found "+highlightWindows.length+" candidate highlights",Math.max(engineProgressValue,28),false,"Rendering the highest-scoring moments in chronological order.");
     }
-    const segments=workflow==="clips"?Math.ceil(duration/clipSeconds):workflow==="highlights"?highlightWindows.length:1;
+    const segments=(workflow==="clips"||workflow==="fast-clips")?Math.ceil(duration/clipSeconds):workflow==="highlights"?highlightWindows.length:1;
     plannedSegments=segments;
     for(let si=0;si<segments;si++){
      if(retryEntry.savedSegments[String(si)]){fileExports++;completedTasks++;continue;}
      const highlight=workflow==="highlights"?highlightWindows[si]:null;
-     const offset=workflow==="highlights"?highlight.start:workflow==="clips"?si*clipSeconds:0,seconds=workflow==="highlights"?highlight.end-highlight.start:workflow==="clips"?Math.min(clipSeconds,duration-offset):duration;
+     const offset=workflow==="highlights"?highlight.start:(workflow==="clips"||workflow==="fast-clips")?si*clipSeconds:0,seconds=workflow==="highlights"?highlight.end-highlight.start:(workflow==="clips"||workflow==="fast-clips")?Math.min(clipSeconds,duration-offset):duration;
      if(seconds<=0)continue;
      const safeTitle=highlight?highlight.title.toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"").slice(0,28):"";
-     const output=base+(workflow==="highlights"?"-highlight-"+String(si+1).padStart(2,"0")+(safeTitle?"-"+safeTitle:""):workflow==="clips"?"-clip-"+String(si+1).padStart(2,"0"):"-export")+".mp4";
+     const output=base+(workflow==="highlights"?"-highlight-"+String(si+1).padStart(2,"0")+(safeTitle?"-"+safeTitle:""):(workflow==="clips"||workflow==="fast-clips")?"-clip-"+String(si+1).padStart(2,"0"):"-export")+".mp4";
      const args=["-ss",String(offset),"-i",input,"-t",String(seconds)];
+     const useFastCopy=workflow==="fast-clips"&&sourceSupportsFastSplit;
      if(workflow==="resize"||workflow==="clips"||workflow==="highlights")args.push(...videoFilterArgs(aspect));
      else args.push("-map","0:v:0","-map","0:a?");
      const ffmpegOutput="./"+output;
      temporaryFFmpegFiles.add(ffmpegOutput);
-     args.push("-c:v","libx264","-preset","ultrafast","-threads",String(ffmpeg.__clipFactoryThreadCount||1),"-crf",workflow==="compress"?"30":"25","-pix_fmt","yuv420p","-c:a","aac","-b:a","160k","-movflags","+faststart",ffmpegOutput);
+     if(useFastCopy)args.push("-c","copy","-avoid_negative_ts","make_zero","-movflags","+faststart",ffmpegOutput);
+     else args.push("-c:v","libx264","-preset","ultrafast","-threads",String(ffmpeg.__clipFactoryThreadCount||1),"-crf",workflow==="compress"?"30":"25","-pix_fmt","yuv420p","-c:a","aac","-b:a","160k","-movflags","+faststart",ffmpegOutput);
      const taskProgressSpan=75/totalTasks;ffmpegProgressBase=15+(completedTasks/totalTasks)*75;ffmpegProgressSpan=taskProgressSpan*0.8;
      ffmpeg.__operationLabel="Rendering "+output;
      engineProgress("Rendering "+output,ffmpegProgressBase,false,"Output "+(si+1)+" of "+segments+" for "+file.name+". This stage uses browser processing and may take time.");
@@ -1336,8 +1355,9 @@ $("createBatch").onclick=async()=>{
       throw new Error("FFmpeg exited with code "+code+" while rendering "+file.name+(diagnostics?"\n\nFFmpeg log:\n"+diagnostics:""));
      }
       // Validate the completed MP4 itself instead of relying on a truncated FFmpeg render log.
-      const durationCheck=await verifySubtitleMp4Duration(ffmpeg,ffmpegOutput,seconds);
-      if(sourceHasAudio&&!/Audio:\s*aac\b/i.test(durationCheck.probeLog))throw new Error("The source contains audio, but the finished MP4 does not contain a confirmed AAC audio stream. It was not uploaded to prevent silent output.");
+      const outputProbeLog=useFastCopy?await probeMediaLog(ffmpeg,ffmpegOutput):(await verifySubtitleMp4Duration(ffmpeg,ffmpegOutput,seconds)).probeLog;
+      if(useFastCopy){const copiedDuration=parseMediaDurationFromFFmpegLog(outputProbeLog);if(!Number.isFinite(copiedDuration)||copiedDuration<=0||!/Video:\s*h264/i.test(outputProbeLog))throw new Error("Quick Split could not verify a compatible H.264 MP4 output. The clip was not uploaded; retry with Create short clips.");}
+      if(sourceHasAudio&&!/Audio:\s*aac\b/i.test(outputProbeLog))throw new Error("The source contains audio, but the finished MP4 does not contain a confirmed AAC audio stream. It was not uploaded to prevent silent output.");
      let outputBytes=await ffmpeg.readFile(ffmpegOutput);
      if(!outputBytes||outputBytes.byteLength<1024||String.fromCharCode(...outputBytes.slice(4,8))!=="ftyp")throw new Error("The export is not a valid MP4 file. It was not uploaded.");
      const exported=new File([outputBytes],output,{type:"video/mp4"});
@@ -1616,5 +1636,5 @@ window.addEventListener("online",checkApiHealth);
 window.addEventListener("offline",()=>{const indicator=$("apiHealth");if(indicator){indicator.textContent="Network offline";indicator.classList.add("offline");indicator.classList.remove("checking")}});
 
 
-$("workflow").addEventListener("change",()=>{const selected=$("workflow").value,subtitle=selected==="subtitle",clips=selected==="clips"||selected==="highlights";$("createBatch").textContent=subtitle?"Generate editable subtitles →":selected==="highlights"?"Find highlights & render clips →":"Upload & process videos →";$("clipDurationWrap").hidden=!clips;$("subtitle-cost-note").hidden=!subtitle;});
+$("workflow").addEventListener("change",()=>{const selected=$("workflow").value,subtitle=selected==="subtitle",fastClips=selected==="fast-clips",clips=fastClips||selected==="clips"||selected==="highlights";$("createBatch").textContent=subtitle?"Generate editable subtitles →":fastClips?"Quick split & save clips →":selected==="highlights"?"Find highlights & render clips →":selected==="clips"?"Create clips & re-encode →":selected==="compress"?"Compress videos →":"Upload & process videos →";$("clipDurationWrap").hidden=!clips;$("subtitle-cost-note").hidden=!subtitle;$("aspect").disabled=fastClips;$("aspectHint").hidden=!fastClips;$("workflowHint").textContent=fastClips?"Quick Split copies compatible H.264/AAC video without re-encoding for much faster cuts. Cuts may shift slightly to the nearest keyframe; other formats are converted automatically.":selected==="clips"?"Standard clip mode re-encodes each segment for precise cuts and broad compatibility.":selected==="highlights"?"AI Highlight Discovery finds distinct moments, then renders each selected segment.":subtitle?"Generate editable captions first, then review and burn them into your video.":selected==="compress"?"Compress full videos to smaller MP4 files.":"Resize full videos for your selected social format.";});
 $("workflow").dispatchEvent(new Event("change"));

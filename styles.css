@@ -993,3 +993,8 @@ label{gap:8px;color:#bfc8d8;font-size:11px;font-weight:650}
 .batch-publish-count{min-width:62px;text-align:center}
 .batch-publish-toolbar .admin-action{min-height:31px;padding:7px 10px;font-size:10px}
 @media(max-width:600px){.batch-publish-toolbar{align-items:stretch;gap:8px}.batch-publish-heading{flex-basis:100%}.batch-publish-select-all,.batch-publish-count{flex:1 1 auto;justify-content:flex-start;text-align:left}.batch-publish-toolbar .admin-action{flex:1 1 calc(50% - 8px);min-width:0}}
+
+/* Quick Split workflow guidance */
+.field-hint{font-size:9px;color:var(--muted);font-weight:400;line-height:1.45}
+.workflow-hint{margin:-8px 0 18px;padding:11px 13px;border:1px solid rgba(145,158,184,.17);border-radius:10px;background:linear-gradient(135deg,rgba(31,39,59,.72),rgba(17,22,34,.78));color:#9ba8bd;font-size:10px;line-height:1.6}
+#workflow:focus-visible,#clipDuration:focus-visible{outline:2px solid rgba(160,137,255,.55);outline-offset:2px}
