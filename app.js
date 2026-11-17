@@ -302,7 +302,7 @@ $("refreshVideos").onclick=loadVideos;
 $("videoLibrary").addEventListener("change",e=>{
  const platform=e.target.closest('[data-publish-field="platform"]');if(!platform)return;
  const details=platform.closest("[data-publish-kit]"),field=details?.querySelector('[data-publish-field="hashtags"]');if(!field)return;
- const remaining=String(field.value||"").replace(/#(?:Shorts|TikTok|Reels|InstagramReels)\\b/gi,"").replace(/\\s+/g," ").trim();
+ const remaining=String(field.value||"").replace(/#(?:Shorts|TikTok|Reels|InstagramReels)\b/gi,"").replace(/\s+/g," ").trim();
  const platformTags=platform.value==="TikTok"?"#TikTok":platform.value==="Instagram Reels"?"#Reels #InstagramReels":platform.value==="Universal"?"":"#Shorts";
  field.value=[platformTags,remaining].filter(Boolean).join(" ");
 });
