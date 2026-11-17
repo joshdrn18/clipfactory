@@ -285,18 +285,21 @@ function savePublishMetadata(videoId,meta){
 }
 
 async function loadVideos(){
- const root=$("videoLibrary");if(!state.user){root.innerHTML="Sign in to view your finished videos.";return}
+ const root=$("videoLibrary");
+ if(!state.user){root.classList.add("empty-state");root.innerHTML="Sign in to view your finished videos.";return}
  (state.videoPreviewUrls||[]).forEach(url=>URL.revokeObjectURL(url));state.videoPreviewUrls=[];
+ root.classList.add("empty-state");
  root.innerHTML='<div class="empty-state">Loading your video library…</div>';
  try{
   const data=await api("/videos");const videos=data.videos||[];
   $("videoCount").textContent=fmt(videos.length);$("videoStorage").textContent=formatBytes(data.storage_bytes);
-  if(!videos.length){root.innerHTML='<div class="empty-state">No finished videos yet. Completed exports will appear here automatically.</div>';return}
+  if(!videos.length){root.classList.add("empty-state");root.innerHTML='<div class="empty-state">No finished videos yet. Completed exports will appear here automatically.</div>';return}
+  root.classList.remove("empty-state");
   root.innerHTML='<div class="batch-publish-toolbar"><div class="batch-publish-heading"><strong>Batch Publish Kit</strong><small>Select clips and prepare one metadata bundle.</small></div><label class="batch-publish-select-all"><input type="checkbox" data-publish-batch-select-all> Select all</label><span class="batch-publish-count" data-publish-batch-count>0 selected</span><button type="button" class="admin-action" data-publish-batch-action="copy">Copy bundle</button><button type="button" class="admin-action" data-publish-batch-action="download">Download bundle</button></div><div class="video-grid">'+videos.map(v=>{
    const meta=getVideoPublishMetadata(v);
    return '<article class="video-card"><label class="batch-publish-item"><input type="checkbox" data-publish-batch-select value="'+escapeHtml(v.id)+'"><span>Add to batch</span></label><div class="video-preview" id="video-preview-'+escapeHtml(v.id)+'"><button class="video-preview-load" data-video-preview="'+escapeHtml(v.id)+'">▶ Load preview</button></div><div class="video-card-body"><strong class="video-name">'+escapeHtml(v.file_name)+'</strong><small>'+escapeHtml(v.project_name||"Original project unavailable")+' · '+formatBytes(v.size_bytes)+' · '+new Date(v.created_at).toLocaleDateString()+'</small><div class="video-card-actions"><button class="admin-action" data-video-download="'+escapeHtml(v.id)+'" data-name="'+escapeHtml(v.file_name)+'">Download</button><button class="admin-action" data-video-rename="'+escapeHtml(v.id)+'" data-name="'+escapeHtml(v.file_name)+'">Rename</button><button class="admin-action danger" data-video-delete="'+escapeHtml(v.id)+'">Delete</button></div>'+renderVideoPublishKit(v,meta)+'</div></article>';
   }).join("")+'</div>';
- }catch(e){root.innerHTML='<div class="notice">Could not load videos: '+escapeHtml(e.message)+'</div>'}
+ }catch(e){root.classList.add("empty-state");root.innerHTML='<div class="notice">Could not load videos: '+escapeHtml(e.message)+'</div>'}
 }
 $("refreshVideos").onclick=loadVideos;
 $("videoLibrary").addEventListener("change",e=>{
