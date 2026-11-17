@@ -292,21 +292,50 @@ async function loadVideos(){
   const data=await api("/videos");const videos=data.videos||[];
   $("videoCount").textContent=fmt(videos.length);$("videoStorage").textContent=formatBytes(data.storage_bytes);
   if(!videos.length){root.innerHTML='<div class="empty-state">No finished videos yet. Completed exports will appear here automatically.</div>';return}
-  root.innerHTML='<div class="video-grid">'+videos.map(v=>{
+  root.innerHTML='<div class="batch-publish-toolbar"><div class="batch-publish-heading"><strong>Batch Publish Kit</strong><small>Select clips and prepare one metadata bundle.</small></div><label class="batch-publish-select-all"><input type="checkbox" data-publish-batch-select-all> Select all</label><span class="batch-publish-count" data-publish-batch-count>0 selected</span><button type="button" class="admin-action" data-publish-batch-action="copy">Copy bundle</button><button type="button" class="admin-action" data-publish-batch-action="download">Download bundle</button></div><div class="video-grid">'+videos.map(v=>{
    const meta=getVideoPublishMetadata(v);
-   return '<article class="video-card"><div class="video-preview" id="video-preview-'+escapeHtml(v.id)+'"><button class="video-preview-load" data-video-preview="'+escapeHtml(v.id)+'">▶ Load preview</button></div><div class="video-card-body"><strong class="video-name">'+escapeHtml(v.file_name)+'</strong><small>'+escapeHtml(v.project_name||"Original project unavailable")+' · '+formatBytes(v.size_bytes)+' · '+new Date(v.created_at).toLocaleDateString()+'</small><div class="video-card-actions"><button class="admin-action" data-video-download="'+escapeHtml(v.id)+'" data-name="'+escapeHtml(v.file_name)+'">Download</button><button class="admin-action" data-video-rename="'+escapeHtml(v.id)+'" data-name="'+escapeHtml(v.file_name)+'">Rename</button><button class="admin-action danger" data-video-delete="'+escapeHtml(v.id)+'">Delete</button></div>'+renderVideoPublishKit(v,meta)+'</div></article>';
+   return '<article class="video-card"><label class="batch-publish-item"><input type="checkbox" data-publish-batch-select value="'+escapeHtml(v.id)+'"><span>Add to batch</span></label><div class="video-preview" id="video-preview-'+escapeHtml(v.id)+'"><button class="video-preview-load" data-video-preview="'+escapeHtml(v.id)+'">▶ Load preview</button></div><div class="video-card-body"><strong class="video-name">'+escapeHtml(v.file_name)+'</strong><small>'+escapeHtml(v.project_name||"Original project unavailable")+' · '+formatBytes(v.size_bytes)+' · '+new Date(v.created_at).toLocaleDateString()+'</small><div class="video-card-actions"><button class="admin-action" data-video-download="'+escapeHtml(v.id)+'" data-name="'+escapeHtml(v.file_name)+'">Download</button><button class="admin-action" data-video-rename="'+escapeHtml(v.id)+'" data-name="'+escapeHtml(v.file_name)+'">Rename</button><button class="admin-action danger" data-video-delete="'+escapeHtml(v.id)+'">Delete</button></div>'+renderVideoPublishKit(v,meta)+'</div></article>';
   }).join("")+'</div>';
  }catch(e){root.innerHTML='<div class="notice">Could not load videos: '+escapeHtml(e.message)+'</div>'}
 }
 $("refreshVideos").onclick=loadVideos;
 $("videoLibrary").addEventListener("change",e=>{
- const platform=e.target.closest('[data-publish-field="platform"]');if(!platform)return;
+ const selectAll=e.target.closest("[data-publish-batch-select-all]");
+ if(selectAll){$("videoLibrary").querySelectorAll("[data-publish-batch-select]").forEach(input=>{input.checked=selectAll.checked})}
+ const selected=$("videoLibrary").querySelectorAll("[data-publish-batch-select]:checked").length;
+ const total=$("videoLibrary").querySelectorAll("[data-publish-batch-select]").length;
+ const count=$("videoLibrary").querySelector("[data-publish-batch-count]");if(count)count.textContent=selected+" selected";
+ const master=$("videoLibrary").querySelector("[data-publish-batch-select-all]");if(master){master.checked=total>0&&selected===total;master.indeterminate=selected>0&&selected<total}
+ const platform=e.target.closest("[data-publish-field=platform]");if(!platform)return;
  const details=platform.closest("[data-publish-kit]"),field=details?.querySelector('[data-publish-field="hashtags"]');if(!field)return;
  const remaining=String(field.value||"").replace(/#(?:Shorts|TikTok|Reels|InstagramReels)\b/gi,"").replace(/\s+/g," ").trim();
  const platformTags=platform.value==="TikTok"?"#TikTok":platform.value==="Instagram Reels"?"#Reels #InstagramReels":platform.value==="Universal"?"":"#Shorts";
  field.value=[platformTags,remaining].filter(Boolean).join(" ");
 });
 $("videoLibrary").onclick=async e=>{
+ const batchAction=e.target.closest("[data-publish-batch-action]");
+ if(batchAction){
+  const selected=[...$("videoLibrary").querySelectorAll("[data-publish-batch-select]:checked")];
+  if(!selected.length){toast("Select at least one video for the batch.");return}
+  try{
+   const entries=selected.map(check=>{
+    const card=check.closest(".video-card"),details=card?.querySelector("[data-publish-kit]");
+    if(!details)throw new Error("A selected video is missing its Publish Kit.");
+    const meta=collectPublishMetadata(details);
+    if(!meta.title)throw new Error("Add a title to every selected video before exporting the batch.");
+    savePublishMetadata(check.value,meta);
+    return {name:details.dataset.publishName||"video",meta};
+   });
+   const payload=entries.map((entry,index)=>"===== VIDEO "+(index+1)+" / "+entries.length+" =====\nFILE: "+entry.name+"\n\n"+formatPublishMetadata(entry.meta)).join("\n\n");
+   if(batchAction.dataset.publishBatchAction==="copy"){await navigator.clipboard.writeText(payload);toast(entries.length+" videos copied as one metadata bundle.");return}
+   if(batchAction.dataset.publishBatchAction==="download"){
+    const blob=new Blob([payload],{type:"text/plain;charset=utf-8"}),url=URL.createObjectURL(blob),link=document.createElement("a");
+    link.href=url;link.download="clipfactory-batch-publish-metadata.txt";document.body.appendChild(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
+    toast("Batch metadata bundle downloaded.");return;
+   }
+  }catch(error){toast(error.message||"Could not prepare batch metadata.")}
+  return;
+ }
  const publishAction=e.target.closest("[data-publish-action]");
  if(publishAction){
   const details=publishAction.closest("[data-publish-kit]");if(!details)return;
